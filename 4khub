@@ -15,7 +15,9 @@ local settings = {
     ESP = true, ESPPlayers = true, ESPNPCs = false, Boxes = true, Skeleton = true, Names = true,
     Distance = true, Health = true, TeamFilter = false,
     Aim = false, AimPlayers = true, AimNPCs = false, Sticky = true, Instant = false, VisibleOnly = true, Circle = true,
-    Radius = 160, Strength = 8, Range = 1000, Thickness = 2,
+    Radius = 160, Strength = 8, Smooth = 0.15, Range = 1000, Thickness = 2,
+    AllyR = 70, AllyG = 225, AllyB = 125,
+    EnemyR = 255, EnemyG = 65, EnemyB = 90, HideAlliesESP = false,
     Hue = 0.57, Target = "Head", BoxStyle = "Completa",
     HubBind = "KeyCode:RightShift", AimBind = "UserInputType:MouseButton2",
     AimMode = "Segurar",
@@ -102,7 +104,7 @@ local theme = {
     Muted=Color3.fromRGB(176,164,198),
 }
 local panel = create("Frame",{
-    Position=UDim2.fromOffset(35,65),Size=UDim2.fromOffset(1120,550),
+    Position=UDim2.fromOffset(35,65),Size=UDim2.fromOffset(700,550),
     BackgroundTransparency=1,BorderSizePixel=0,Active=true,ZIndex=10,
 },gui)
 local hudScale=create("UIScale",{Scale=1},panel)
@@ -111,6 +113,10 @@ local mainFrame=create("Frame",{
     BorderSizePixel=0,ZIndex=10,
 },panel)
 local border=create("UIStroke",{Color=theme.Accent,Thickness=1},mainFrame)
+local dragBar=create("TextButton",{
+    Position=UDim2.fromOffset(0,0),Size=UDim2.new(1,-28,0,25),
+    BackgroundTransparency=1,Text="",AutoButtonColor=false,ZIndex=11,
+},mainFrame)
 create("Frame",{
     Position=UDim2.fromOffset(0,25),Size=UDim2.new(1,0,0,1),
     BackgroundColor3=theme.Accent,BorderSizePixel=0,ZIndex=11,
@@ -127,8 +133,8 @@ local closeButton=create("TextButton",{
     Font=Enum.Font.Gotham,TextSize=18,Modal=true,ZIndex=13,
 },mainFrame)
 local tabs=create("Frame",{
-    Position=UDim2.fromOffset(120,0),Size=UDim2.fromOffset(520,25),
-    BackgroundTransparency=1,ZIndex=11,
+    Position=UDim2.fromOffset(120,0),Size=UDim2.fromOffset(244,25),
+    BackgroundTransparency=1,ZIndex=12,
 },mainFrame)
 create("UIListLayout",{
     FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),
@@ -154,7 +160,7 @@ for index,name in ipairs({"Mira","Visual","Perfis"}) do
     local b=create("TextButton",{
         LayoutOrder=index,Size=UDim2.fromOffset(76,25),Text=name,
         BackgroundColor3=Color3.fromRGB(41,24,62),BorderSizePixel=0,
-        TextColor3=theme.Muted,TextSize=11,Font=Enum.Font.Gotham,ZIndex=12,
+        TextColor3=theme.Muted,TextSize=11,Font=Enum.Font.Gotham,ZIndex=13,
     },tabs)
     tabButtons[name]=b
     connect(b.Activated,function() selectTab(name) end)
@@ -196,7 +202,7 @@ local shortcutHint=create("TextLabel",{
 },mainFrame)
 local function refreshShortcutHint()
     shortcutHint.Text=bindingLabel(settings.HubBind)..": menu   |   Mira: "
-        ..bindingLabel(settings.AimBind).."   |   4k hub"
+        ..bindingLabel(settings.AimBind).."   |   Arraste a barra superior"
 end
 table.insert(refreshControls,refreshShortcutHint)
 refreshShortcutHint()
@@ -208,13 +214,14 @@ local status=create("TextLabel",{
 },gui)
 
 local playerPanel=create("Frame",{
-    Position=UDim2.fromOffset(710,0),Size=UDim2.fromOffset(400,408),
+    Position=UDim2.fromOffset(745,65),Size=UDim2.fromOffset(400,408),
     BackgroundColor3=theme.Background,BorderSizePixel=0,ZIndex=11,
-},panel)
+},gui)
+local playerPanelScale=create("UIScale",{Scale=1},playerPanel)
 create("UIStroke",{Color=theme.Accent,Thickness=1},playerPanel)
-create("TextLabel",{
+local playerHeader=create("TextLabel",{
     Size=UDim2.new(1,0,0,25),BackgroundTransparency=1,Text="Jogadores",
-    TextColor3=theme.Text,Font=Enum.Font.GothamBold,TextSize=12,ZIndex=12,
+    TextColor3=theme.Text,Font=Enum.Font.GothamBold,TextSize=12,ZIndex=12,Active=true,
 },playerPanel)
 local playerList=create("ScrollingFrame",{
     Position=UDim2.fromOffset(6,27),Size=UDim2.new(1,-12,0,228),
@@ -345,6 +352,7 @@ local function toggle(key, text)
     refresh(b)
 end
 local sliderDrag
+local colorPreviewRefreshers = {}
 local function slider(key, text, low, high, step)
     local row = create("Frame", {
         Size = UDim2.new(1, -6, 0, 44), BackgroundTransparency = 1, ZIndex = 12,
@@ -366,13 +374,14 @@ local function slider(key, text, low, high, step)
     corner(fill, 6)
     local function refresh()
         fill.Size = UDim2.fromScale((settings[key] - low) / (high - low), 1)
-        caption.Text = text .. ": " .. string.format("%.2f", settings[key])
+        caption.Text = text .. ": " .. string.format(step >= 1 and "%.0f" or "%.2f", settings[key])
     end
     local function update(x)
         local t = math.clamp((x - track.AbsolutePosition.X)
             / math.max(track.AbsoluteSize.X, 1), 0, 1)
         settings[key] = math.clamp(math.round((low + t * (high-low)) / step) * step, low, high)
         refresh()
+        for _, updatePreview in ipairs(colorPreviewRefreshers) do updatePreview() end
     end
     connect(track.InputBegan, function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -384,10 +393,32 @@ local function slider(key, text, low, high, step)
     table.insert(refreshControls, refresh)
 end
 
+local function teamESPColor(prefix)
+    return Color3.fromRGB(settings[prefix.."R"],settings[prefix.."G"],settings[prefix.."B"])
+end
+local function colorPicker(prefix,title)
+    local swatch=label(title)
+    swatch.BackgroundTransparency=0
+    swatch.TextXAlignment=Enum.TextXAlignment.Center
+    local function refreshPreview()
+        local color=teamESPColor(prefix)
+        swatch.BackgroundColor3=color
+        local luminance=color.R*0.2126+color.G*0.7152+color.B*0.0722
+        swatch.TextColor3=luminance>0.55 and Color3.new(0,0,0) or Color3.new(1,1,1)
+    end
+    table.insert(colorPreviewRefreshers,refreshPreview)
+    table.insert(refreshControls,refreshPreview)
+    slider(prefix.."R",title.." / vermelho",0,255,1)
+    slider(prefix.."G",title.." / verde",0,255,1)
+    slider(prefix.."B",title.." / azul",0,255,1)
+    refreshPreview()
+end
+
 label("VISUAL")
 toggle("ESP", "ESP geral")
 toggle("ESPPlayers", "ESP em jogadores")
 toggle("ESPNPCs", "ESP em NPCs")
+toggle("HideAlliesESP", "Ocultar aliados no ESP")
 list = section("Visual","Estilo do ESP",2)
 toggle("Boxes", "Box")
 local boxStyleButton = button("Box: " .. settings.BoxStyle, function(b)
@@ -402,7 +433,9 @@ toggle("Health", "Vida")
 list = section("Visual","Ajustes visuais",3)
 slider("Range", "Distância máxima", 50, 3000, 10)
 slider("Thickness", "Espessura", 1, 5, 1)
-slider("Hue", "Cor", 0, 1, 0.01)
+slider("Hue", "Sem equipe / FOV", 0, 1, 0.01)
+colorPicker("Ally","Aliados")
+colorPicker("Enemy","Inimigos")
 list = section("Mira","Ativação",1)
 label("MIRA")
 toggle("Aim", "Aimbot")
@@ -411,12 +444,15 @@ toggle("Sticky", "Manter alvo enquanto válido")
 toggle("AimNPCs", "Mira em NPCs")
 toggle("Instant", "Rage / alinhamento instantâneo")
 list = section("Mira","Filtros / FOV",2)
-toggle("TeamFilter", "Ignorar aliados")
+toggle("TeamFilter", "Ignorar aliados na mira")
 toggle("VisibleOnly", "Verificar obstáculos")
 toggle("Circle", "Círculo FOV")
 slider("Radius", "Raio do FOV em pixels", 20, 700, 5)
 list = section("Mira","Ajustes de mira",3)
-slider("Strength", "Intensidade da mira", 1, 40, 1)
+slider("Strength", "Força da puxada", 1, 40, 1)
+slider("Smooth", "Smooth / suavização (s)", 0.01, 1, 0.01)
+local smoothHint=label("Smooth maior: mais suave. Força maior: puxa mais rápido. Rage ignora o smooth.")
+smoothHint.Size=UDim2.new(1,-6,0,60)
 local targetButton = button("Alvo: Head", function(b)
     settings.Target = settings.Target == "Head" and "HumanoidRootPart" or "Head"
     b.Text = "Alvo: " .. settings.Target
@@ -470,13 +506,45 @@ create("UIPadding", {
     PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8),
     PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
 }, profileBox)
-local profileStatus = label("Perfis não são gravados automaticamente em disco.")
+local profileStatus = label("Importe ou exporte um perfil abaixo.")
 profileStatus.TextWrapped = true
 profileStatus.Size = UDim2.new(1, -6, 0, 40)
+local autoSaveStatus=label("Salvamento automático: iniciando...")
+autoSaveStatus.TextWrapped=true
+autoSaveStatus.Size=UDim2.new(1,-6,0,80)
 local limits = {
-    Radius = {20,700}, Strength = {1,40}, Range = {50,3000},
+    Radius = {20,700}, Strength = {1,40}, Smooth = {0.01,1}, Range = {50,3000},
     Thickness = {1,5}, Hue = {0,1},
+    AllyR={0,255},AllyG={0,255},AllyB={0,255},
+    EnemyR={0,255},EnemyG={0,255},EnemyB={0,255},
 }
+local function validateSavedSettings(data)
+    if type(data)~="table" then return nil end
+    local candidate=table.clone(defaults)
+    for key,value in pairs(data) do
+        if defaults[key]~=nil then
+            if typeof(value)~=typeof(defaults[key]) then return nil end
+            if limits[key] then
+                if value~=value or math.abs(value)==math.huge then return nil end
+                candidate[key]=math.clamp(value,limits[key][1],limits[key][2])
+            elseif key=="HubBind" or key=="AimBind" then
+                if not validBinding(value) then return nil end
+                candidate[key]=value
+            elseif key=="AimMode" then
+                if value~="Segurar" and value~="Alternar" then return nil end
+                candidate[key]=value
+            elseif key=="Target" then
+                if value~="Head" and value~="HumanoidRootPart" then return nil end
+                candidate[key]=value
+            elseif key=="BoxStyle" then
+                if value~="Completa" and value~="Cantos" then return nil end
+                candidate[key]=value
+            else candidate[key]=value end
+        end
+    end
+    if candidate.HubBind==candidate.AimBind then return nil end
+    return candidate
+end
 button("Exportar configuração", function()
     profileBox.Text = HttpService:JSONEncode(settings)
     profileStatus.Text = "Selecione e copie o texto para guardar seu perfil."
@@ -542,6 +610,8 @@ button("Restaurar padrões", function()
 end)
 
 local savedBehavior, savedIcon
+local activeDrag, dragInput, dragOrigin, dragPosition
+local panelDrag, playerPanelDrag, playerDetached = false, false, false
 local function releaseMouse()
     UIS.MouseBehavior = Enum.MouseBehavior.Default
     UIS.MouseIconEnabled = true
@@ -557,36 +627,50 @@ local function setMenu(open)
     end
     menuOpen = open
     panel.Visible = open
+    playerPanel.Visible = open
+    activeDrag,dragInput,panelDrag,playerPanelDrag=nil,nil,false,false
     sliderDrag = nil
     if open then releaseMouse() end
 end
 savedBehavior, savedIcon = UIS.MouseBehavior, UIS.MouseIconEnabled
 releaseMouse()
 connect(closeButton.Activated, function() setMenu(false) end)
-local panelDrag, dragOrigin, panelOrigin
-connect(header.InputBegan, function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        panelDrag, dragOrigin, panelOrigin = true, input.Position, panel.Position
-    end
-end)
+local function draggable(handle,target,isPlayerPanel)
+    connect(handle.InputBegan,function(input)
+        if not menuOpen or pendingBind then return end
+        if input.UserInputType~=Enum.UserInputType.MouseButton1
+            and input.UserInputType~=Enum.UserInputType.Touch then return end
+        activeDrag,dragInput=target,input
+        dragOrigin=Vector2.new(input.Position.X,input.Position.Y)
+        dragPosition=target.AbsolutePosition
+        panelDrag,playerPanelDrag=not isPlayerPanel,isPlayerPanel
+        if isPlayerPanel then playerDetached=true end
+        sliderDrag=nil
+    end)
+end
+draggable(dragBar,panel,false)
+draggable(header,panel,false)
+draggable(playerHeader,playerPanel,true)
 connect(UIS.InputChanged, function(input)
-    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
-    if sliderDrag then sliderDrag(input.Position.X) end
-    if panelDrag then
-        local delta = input.Position - dragOrigin
+    local mouseMoved=input.UserInputType==Enum.UserInputType.MouseMovement
+    local touchMoved=input.UserInputType==Enum.UserInputType.Touch and input==dragInput
+    if not mouseMoved and not touchMoved then return end
+    if sliderDrag and mouseMoved then sliderDrag(input.Position.X) end
+    if activeDrag then
+        local delta = Vector2.new(input.Position.X,input.Position.Y)-dragOrigin
         local camera = workspace.CurrentCamera
         if camera then
             local view = camera.ViewportSize
-            panel.Position = UDim2.fromOffset(
-                math.clamp(panelOrigin.X.Offset + delta.X, 0, math.max(0, view.X-panel.AbsoluteSize.X)),
-                math.clamp(panelOrigin.Y.Offset + delta.Y, 0, math.max(0, view.Y-panel.AbsoluteSize.Y)))
+            activeDrag.Position = UDim2.fromOffset(
+                math.clamp(dragPosition.X+delta.X,0,math.max(0,view.X-activeDrag.AbsoluteSize.X)),
+                math.clamp(dragPosition.Y+delta.Y,0,math.max(0,view.Y-activeDrag.AbsoluteSize.Y)))
         end
     end
 end)
 connect(UIS.InputEnded, function(input)
     if inputBinding(input) == bindingRelease then bindingRelease = nil end
-    if input.UserInputType == Enum.UserInputType.MouseButton1 then
-        sliderDrag, panelDrag = nil, false
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input==dragInput then
+        sliderDrag,activeDrag,dragInput,panelDrag,playerPanelDrag=nil,nil,nil,false,false
     end
 end)
 connect(UIS.InputBegan, function(input, processed)
@@ -621,7 +705,7 @@ connect(UIS.InputBegan, function(input, processed)
     end
 end)
 connect(UIS.WindowFocusReleased, function()
-    sliderDrag, panelDrag = nil, false
+    sliderDrag,activeDrag,dragInput,panelDrag,playerPanelDrag=nil,nil,nil,false,false
     resetInputState()
     refreshBindingButtons()
 end)
@@ -637,12 +721,12 @@ local function newLine(parent)
         AnchorPoint = Vector2.new(0.5, 0.5), BorderSizePixel = 0, Visible = false,
     }, parent)
 end
-local function drawLine(obj, a, b)
+local function drawLine(obj, a, b, color)
     local d = b-a
     obj.Position = UDim2.fromOffset((a.X+b.X)/2, (a.Y+b.Y)/2)
     obj.Size = UDim2.fromOffset(d.Magnitude, settings.Thickness)
     obj.Rotation = math.deg(math.atan2(d.Y, d.X))
-    obj.BackgroundColor3 = accent
+    obj.BackgroundColor3 = color or accent
     obj.Visible = true
 end
 list = section("Perfis","Diagnóstico",3)
@@ -650,6 +734,16 @@ local diagnostics = label("Diagnóstico: aguardando personagens")
 diagnostics.Size = UDim2.new(1,-6,0,160)
 diagnostics.TextWrapped = true
 diagnostics.TextYAlignment = Enum.TextYAlignment.Top
+button("Reposicionar janelas",function()
+    local camera=workspace.CurrentCamera
+    if not camera then return end
+    local scale=hudScale.Scale
+    local view=camera.ViewportSize
+    panel.Position=UDim2.fromOffset(math.max(0,(view.X-1110*scale)/2),
+        math.max(0,(view.Y-550*scale)/2))
+    activeDrag,dragInput,panelDrag,playerPanelDrag=nil,nil,false,false
+    playerDetached=false
+end)
 
 local humanoids = {}
 local function register(object)
@@ -713,7 +807,79 @@ local function ownerOf(model,owners)
     for character,owner in pairs(owners) do
         if model == character or model:IsDescendantOf(character) then return owner end
     end
+    local userId=model:GetAttribute("UserId") or model:GetAttribute("PlayerUserId")
+        or model:GetAttribute("OwnerUserId")
+    for _,owner in ipairs(Players:GetPlayers()) do
+        if model.Name==owner.Name or (userId~=nil and tostring(userId)==tostring(owner.UserId)) then
+            return owner
+        end
+    end
     return nil
+end
+local teamFields={team=true,teamid=true,teamname=true,teamcolor=true,
+    faction=true,factionid=true,factionname=true,side=true,sideid=true}
+local function teamTokens(owner,model)
+    local tokens={}
+    local function add(value,field)
+        local kind=typeof(value)
+        if kind=="Instance" then
+            if value:IsA("Team") then
+                tokens["name:"..value.Name:lower()]=true
+                tokens["color:"..tostring(value.TeamColor.Number)]=true
+                tokens["name:"..value.TeamColor.Name:lower()]=true
+            end
+        elseif kind=="BrickColor" then
+            tokens["color:"..tostring(value.Number)]=true
+            tokens["name:"..value.Name:lower()]=true
+        elseif kind=="Color3" then
+            local brick=BrickColor.new(value)
+            tokens["color:"..tostring(brick.Number)]=true
+            tokens["name:"..brick.Name:lower()]=true
+        elseif kind=="string" or kind=="number" then
+            local text=tostring(value):lower():gsub("^%s+",""):gsub("%s+$","")
+            if text~="" and text~="neutral" and text~="none" and text~="spectator"
+                and text~="lobby" then
+                tokens["name:"..text]=true
+                if field=="teamcolor" and tonumber(value) then
+                    tokens["color:"..tostring(tonumber(value))]=true
+                end
+            end
+        end
+    end
+    local function read(source)
+        if not source then return end
+        for key,value in pairs(source:GetAttributes()) do
+            local field=key:lower():gsub("[_%s]","")
+            if teamFields[field] then add(value,field) end
+        end
+        for _,child in ipairs(source:GetChildren()) do
+            local field=child.Name:lower():gsub("[_%s]","")
+            if teamFields[field] and child:IsA("ValueBase") then add(child.Value,field) end
+        end
+    end
+    if owner and owner.Team and not owner.Neutral then add(owner.Team) end
+    read(owner)
+    if model then
+        read(model)
+        read(model:FindFirstChildWhichIsA("Humanoid",true))
+        local parent=model.Parent
+        for _=1,3 do
+            if not parent or parent==workspace then break end
+            read(parent)
+            parent=parent.Parent
+        end
+    end
+    return tokens
+end
+local function shareTeam(a,b)
+    for token in pairs(a) do if b[token] then return true end end
+    return false
+end
+local function describeTeam(tokens)
+    local names={}
+    for token in pairs(tokens) do table.insert(names,token) end
+    table.sort(names)
+    return #names>0 and table.concat(names,", ") or "não identificada"
 end
 local function synchronize(camera)
     local wanted,owners = {},{}
@@ -724,13 +890,15 @@ local function synchronize(camera)
             if hum then wanted[p.Character] = {Owner=p,Humanoid=hum} end
         end
     end
-    if settings.ESPNPCs or settings.AimNPCs then
+    do
         for hum in pairs(humanoids) do
             local model = hum.Parent
             if model and model:IsA("Model") and model:IsDescendantOf(workspace)
-                and not model:IsDescendantOf(camera) and not excluded(model)
-                and not ownerOf(model,owners) then
-                wanted[model] = {Humanoid=hum}
+                and not model:IsDescendantOf(camera) and not excluded(model) then
+                local owner=ownerOf(model,owners)
+                if owner~=player and (owner or settings.ESPNPCs or settings.AimNPCs) then
+                    wanted[model] = {Owner=owner,Humanoid=hum}
+                end
             end
         end
     end
@@ -776,14 +944,14 @@ local function visible(camera,record,position)
     local hit = workspace:Raycast(camera.CFrame.Position,position-camera.CFrame.Position,params)
     return not hit or hit.Instance:IsDescendantOf(record.Model)
 end
-local function renderESP(camera,record,distance)
+local function renderESP(camera,record,distance,espColor)
     local lo,hi = bounds(camera,record)
     if not lo then return end
     record.Root.Visible=true
     record.Box.Visible=settings.Boxes and settings.BoxStyle=="Completa"
     record.Box.Position=UDim2.fromOffset(lo.X,lo.Y)
     record.Box.Size=UDim2.fromOffset(hi.X-lo.X,hi.Y-lo.Y)
-    record.Stroke.Color,record.Stroke.Thickness=accent,settings.Thickness
+    record.Stroke.Color,record.Stroke.Thickness=espColor,settings.Thickness
     if settings.Boxes and settings.BoxStyle=="Cantos" then
         local w,h=(hi.X-lo.X)*0.23,(hi.Y-lo.Y)*0.19
         local segments={
@@ -796,7 +964,7 @@ local function renderESP(camera,record,distance)
         }
         for index,segment in ipairs(segments) do
             record.Corners[index]=record.Corners[index] or newLine(record.Root)
-            drawLine(record.Corners[index],segment[1],segment[2])
+            drawLine(record.Corners[index],segment[1],segment[2],espColor)
         end
     end
     local hum=record.Humanoid
@@ -807,13 +975,13 @@ local function renderESP(camera,record,distance)
     if settings.Health then table.insert(text,string.format("HP %.0f",hum.Health)) end
     record.Text.Visible=#text>0
     record.Text.Text=table.concat(text," | ")
-    record.Text.TextColor3=accent
+    record.Text.TextColor3=espColor
     record.Text.Position=UDim2.fromOffset((lo.X+hi.X)/2,lo.Y-4)
     local fraction=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
     record.Health.Visible=settings.Health
     record.Health.Size=UDim2.fromOffset(3,(hi.Y-lo.Y)*fraction)
     record.Health.Position=UDim2.fromOffset(lo.X-6,hi.Y-(hi.Y-lo.Y)*fraction)
-    record.Health.BackgroundColor3=Color3.fromHSV(fraction/3,0.8,1)
+    record.Health.BackgroundColor3=espColor
     if settings.Skeleton then
         local index=0
         for _,joint in ipairs(record.Joints) do
@@ -825,13 +993,110 @@ local function renderESP(camera,record,distance)
             if va and vb then
                 index+=1
                 record.Lines[index]=record.Lines[index] or newLine(record.Root)
-                drawLine(record.Lines[index],pa,pb)
+                drawLine(record.Lines[index],pa,pb,espColor)
             end
         end
     end
 end
+-- Optional local storage is used only when the client environment exposes file APIs.
+local storageEnvironment=getfenv()
+local diskRead=storageEnvironment.readfile
+local diskWrite=storageEnvironment.writefile
+local canUseDisk=type(diskRead)=="function" and type(diskWrite)=="function"
+local saveFile=string.format("4kHub_%s_%s.json",tostring(player.UserId),tostring(game.GameId))
+local sessionKey="_4kHubSave_"..tostring(game.GameId)
+local settingKeys={}
+for key in pairs(defaults) do table.insert(settingKeys,key) end
+table.sort(settingKeys)
+local function snapshot()
+    local layout={
+        MainX=panel.Position.X.Offset,MainY=panel.Position.Y.Offset,
+        PlayersX=playerPanel.Position.X.Offset,PlayersY=playerPanel.Position.Y.Offset,
+        Detached=playerDetached,
+    }
+    local signature={}
+    for _,key in ipairs(settingKeys) do table.insert(signature,settings[key]) end
+    for _,key in ipairs({"MainX","MainY","PlayersX","PlayersY"}) do
+        table.insert(signature,math.round(layout[key]*100)/100)
+    end
+    table.insert(signature,layout.Detached)
+    local data={Version=1,Settings=table.clone(settings),Layout=layout}
+    return data,HttpService:JSONEncode(signature)
+end
+local function decodeSave(raw)
+    if type(raw)~="string" or #raw>100000 then return nil end
+    local ok,data=pcall(function() return HttpService:JSONDecode(raw) end)
+    if not ok or type(data)~="table" or data.Version~=1 then return nil end
+    local candidate=validateSavedSettings(data.Settings)
+    if not candidate then return nil end
+    return {Settings=candidate,Layout=type(data.Layout)=="table" and data.Layout or {}}
+end
+local loaded
+local sessionOK,sessionRaw=pcall(function() return playerGui:GetAttribute(sessionKey) end)
+if sessionOK then loaded=decodeSave(sessionRaw) end
+if not loaded and canUseDisk then
+    local ok,raw=pcall(diskRead,saveFile)
+    if ok then loaded=decodeSave(raw) end
+end
+if loaded then
+    for key,value in pairs(loaded.Settings) do settings[key]=value end
+    local layout=loaded.Layout
+    local function coordinate(value)
+        return type(value)=="number" and value==value and math.abs(value)<1000000
+    end
+    if coordinate(layout.MainX) and coordinate(layout.MainY) then
+        panel.Position=UDim2.fromOffset(layout.MainX,layout.MainY)
+    end
+    if coordinate(layout.PlayersX) and coordinate(layout.PlayersY) then
+        playerPanel.Position=UDim2.fromOffset(layout.PlayersX,layout.PlayersY)
+    end
+    playerDetached=layout.Detached==true
+    resetInputState()
+    for _,refresh in ipairs(refreshControls) do refresh() end
+end
+autoSaveStatus.Text=canUseDisk and "Automático: arquivo local + sessão."
+    or "Automático: somente nesta sessão (gravação de arquivo indisponível)."
+if loaded then autoSaveStatus.Text..=" Configuração restaurada." end
+local observedSignature,savedSignature=nil,nil
+local saveClock,changedAt,saveInterval,nextSaveAttempt=0,0,0,0
+local function flushAutoSave(force)
+    local data,signature=snapshot()
+    if not force and signature==savedSignature then return end
+    local raw=HttpService:JSONEncode(data)
+    local sessionSaved=pcall(function() playerGui:SetAttribute(sessionKey,raw) end)
+    local diskSaved=false
+    if canUseDisk then diskSaved=pcall(diskWrite,saveFile,raw) end
+    if diskSaved then
+        autoSaveStatus.Text="Automático: salvo em arquivo local + sessão."
+    elseif sessionSaved then
+        autoSaveStatus.Text=canUseDisk and "Salvo na sessão. Não foi possível gravar o arquivo."
+            or "Salvo somente nesta sessão. Gravação de arquivo indisponível."
+    else
+        autoSaveStatus.Text="Não foi possível salvar. Exporte o perfil para guardar uma cópia."
+    end
+    if sessionSaved or diskSaved then
+        savedSignature=signature
+        nextSaveAttempt=0
+    else nextSaveAttempt=saveClock+3 end
+end
+connect(RunService.Heartbeat,function(dt)
+    if dead then return end
+    saveClock+=dt
+    saveInterval+=dt
+    if saveInterval<0.25 then return end
+    saveInterval=0
+    local _,signature=snapshot()
+    if signature~=observedSignature then
+        observedSignature,changedAt=signature,saveClock
+    end
+    if signature~=savedSignature and saveClock-changedAt>=0.65 and saveClock>=nextSaveAttempt
+        and not activeDrag and not sliderDrag and not pendingBind then
+        flushAutoSave(false)
+    end
+end)
 local function cleanup()
     if dead then return end
+    pcall(flushAutoSave,true)
     dead=true
     RunService:UnbindFromRenderStep(binding)
     for _,c in ipairs(connections) do c:Disconnect() end
@@ -855,11 +1120,25 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
     accent=Color3.fromHSV(settings.Hue,0.7,1)
     header.TextColor3,border.Color,status.TextColor3=theme.Text,theme.Accent,theme.Accent
     local view=camera.ViewportSize
-    panel.Size=UDim2.fromOffset(1120,550)
+    panel.Size=UDim2.fromOffset(700,550)
     hudScale.Scale=math.min(1,math.max(0.25,math.min((view.X-24)/1120,(view.Y-70)/550)))
+    playerPanelScale.Scale=hudScale.Scale
+    playerPanel.Visible=menuOpen
     if not panelDrag then panel.Position=UDim2.fromOffset(
         math.clamp(panel.Position.X.Offset,0,math.max(0,view.X-panel.AbsoluteSize.X)),
         math.clamp(panel.Position.Y.Offset,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end
+    if not playerPanelDrag then
+        if not playerDetached then
+            playerPanel.Position=UDim2.fromOffset(
+                math.clamp(panel.AbsolutePosition.X+panel.AbsoluteSize.X+10*hudScale.Scale,
+                    0,math.max(0,view.X-playerPanel.AbsoluteSize.X)),
+                math.clamp(panel.AbsolutePosition.Y,0,math.max(0,view.Y-playerPanel.AbsoluteSize.Y)))
+        else
+            playerPanel.Position=UDim2.fromOffset(
+                math.clamp(playerPanel.Position.X.Offset,0,math.max(0,view.X-playerPanel.AbsoluteSize.X)),
+                math.clamp(playerPanel.Position.Y.Offset,0,math.max(0,view.Y-playerPanel.AbsoluteSize.Y)))
+        end
+    end
     local inset=GuiService:GetGuiInset()
     status.Position=UDim2.fromOffset(12,inset.Y+8)
     status.Size=UDim2.fromOffset(math.min(550,math.max(200,view.X-24)),25)
@@ -882,6 +1161,9 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
     local best,bestPosition,bestScore=nil,nil,settings.Radius
     local retained,retainedPosition=nil,nil
     local playerCount,npcCount,drawn=0,0,0
+    local filteredAllies,unknownTeams=0,0
+    local myTeams=teamTokens(player,own)
+    local allyColor,enemyColor=teamESPColor("Ally"),teamESPColor("Enemy")
     for model,record in pairs(records) do
         record.Root.Visible=false
         for _,line in ipairs(record.Lines) do line.Visible=false end
@@ -892,8 +1174,12 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
         if not hum or not hum:IsDescendantOf(model) or hum.Health<=0 then continue end
         if record.Dirty then refreshRig(record) end
         local owner=record.Owner
-        if owner and settings.TeamFilter and player.Team and owner.Team==player.Team
-            and not player.Neutral and not owner.Neutral then continue end
+        local theirTeams=teamTokens(owner,model)
+        local teamKnown=next(myTeams)~=nil and next(theirTeams)~=nil
+        local allied=teamKnown and shareTeam(myTeams,theirTeams)
+        if not teamKnown then unknownTeams+=1 end
+        if settings.TeamFilter and allied then filteredAllies+=1 end
+        local espColor=not teamKnown and accent or (allied and allyColor or enemyColor)
         local target=bodyPart(model,settings.Target) or bodyPart(model,"HumanoidRootPart")
             or bodyPart(model,"Head") or bodyPart(model,"UpperTorso")
             or bodyPart(model,"Torso") or model.PrimaryPart
@@ -902,7 +1188,7 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
         if distance>settings.Range then continue end
         if owner then playerCount+=1 else npcCount+=1 end
         local aimAllowed=(owner and settings.AimPlayers) or (not owner and settings.AimNPCs)
-        if aiming and aimAllowed then
+        if aiming and aimAllowed and not (settings.TeamFilter and allied) then
             local point,onScreen=project(camera,target.Position)
             local score=(point-center).Magnitude
             if onScreen and score<=settings.Radius and (not settings.VisibleOnly
@@ -912,8 +1198,8 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
             end
         end
         local espAllowed=(owner and settings.ESPPlayers) or (not owner and settings.ESPNPCs)
-        if settings.ESP and espAllowed then
-            renderESP(camera,record,distance)
+        if settings.ESP and espAllowed and not (settings.HideAlliesESP and allied) then
+            renderESP(camera,record,distance,espColor)
             if record.Root.Visible then drawn+=1 end
         end
     end
@@ -921,15 +1207,17 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
     locked=aiming and best or nil
     if aiming and bestPosition and (bestPosition-camera.CFrame.Position).Magnitude>0.01 then
         local desired=CFrame.lookAt(camera.CFrame.Position,bestPosition)
-        camera.CFrame=camera.CFrame:Lerp(desired,settings.Instant and 1
-            or 1-math.exp(-settings.Strength*dt))
+        local pullRate=settings.Strength/(8*math.max(settings.Smooth,0.01))
+        local alpha=settings.Instant and 1 or 1-math.exp(-pullRate*dt)
+        camera.CFrame=camera.CFrame:Lerp(desired,alpha)
     end
     if refreshed then
         status.Text=string.format("4k hub • jogadores %d • NPCs %d • ESP %d • aim %s",
             playerCount,npcCount,drawn,settings.Aim and "ON" or "OFF")
         diagnostics.Text=string.format(
-            "PlaceId: %s\nElegíveis: %d jogadores / %d NPCs\nESP na tela: %d\nNPCs precisam de Model + Humanoid vivo.\nMira: %s (%s); menu aberto pausa a mira.",
+            "PlaceId: %s\nElegíveis: %d jogadores / %d NPCs\nESP na tela: %d\nMinha equipe: %s\nAliados ignorados: %d | equipe desconhecida: %d\nMira: %s (%s)",
             tostring(game.PlaceId),playerCount,npcCount,drawn,
+            describeTeam(myTeams),filteredAllies,unknownTeams,
             bindingLabel(settings.AimBind),settings.AimMode)
     end
 end)
