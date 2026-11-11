@@ -17,7 +17,55 @@ local settings = {
     Aim = false, AimPlayers = true, AimNPCs = false, Sticky = true, Instant = false, VisibleOnly = true, Circle = true,
     Radius = 160, Strength = 8, Range = 1000, Thickness = 2,
     Hue = 0.57, Target = "Head", BoxStyle = "Completa",
+    HubBind = "KeyCode:RightShift", AimBind = "UserInputType:MouseButton2",
+    AimMode = "Segurar",
 }
+local keyboardBindings = {}
+for _, key in ipairs(Enum.KeyCode:GetEnumItems()) do
+    if key ~= Enum.KeyCode.Unknown and key ~= Enum.KeyCode.Escape
+        and not key.Name:match("^Button") and not key.Name:match("^DPad")
+        and not key.Name:match("^Thumbstick") then
+        keyboardBindings["KeyCode:" .. key.Name] = key
+    end
+end
+local mouseBindings = {
+    ["UserInputType:MouseButton1"] = Enum.UserInputType.MouseButton1,
+    ["UserInputType:MouseButton2"] = Enum.UserInputType.MouseButton2,
+    ["UserInputType:MouseButton3"] = Enum.UserInputType.MouseButton3,
+}
+local function validBinding(value)
+    return keyboardBindings[value] ~= nil or mouseBindings[value] ~= nil
+end
+local function inputBinding(input)
+    if input.UserInputType == Enum.UserInputType.Keyboard then
+        local value = "KeyCode:" .. input.KeyCode.Name
+        if keyboardBindings[value] then return value end
+    else
+        local value = "UserInputType:" .. input.UserInputType.Name
+        if mouseBindings[value] then return value end
+    end
+    return nil
+end
+local function bindingLabel(value)
+    local labels = {
+        ["UserInputType:MouseButton1"] = "Mouse esquerdo",
+        ["UserInputType:MouseButton2"] = "Mouse direito",
+        ["UserInputType:MouseButton3"] = "Mouse central",
+    }
+    return labels[value] or value:gsub("^KeyCode:", "")
+end
+local pendingBind, bindingRelease, aimLatched = nil, nil, false
+local function resetInputState()
+    pendingBind, bindingRelease, aimLatched = nil, nil, false
+end
+local function aimInputActive()
+    if pendingBind or bindingRelease then return false end
+    if settings.AimMode == "Alternar" then return aimLatched end
+    local key = keyboardBindings[settings.AimBind]
+    if key then return UIS:IsKeyDown(key) end
+    local mouse = mouseBindings[settings.AimBind]
+    return mouse ~= nil and UIS:IsMouseButtonPressed(mouse)
+end
 local defaults = table.clone(settings)
 local refreshControls = {}
 local connections, records = {}, {}
@@ -36,7 +84,7 @@ local function connect(signal, fn)
     return connection
 end
 local function corner(obj, radius)
-    create("UICorner", {CornerRadius = UDim.new(0, radius)}, obj)
+    create("UICorner", {CornerRadius = UDim.new(0, 0)}, obj)
 end
 local gui = create("ScreenGui", {
     Name = "BloxVisualHUD", ResetOnSpawn = false, IgnoreGuiInset = true,
@@ -45,116 +93,254 @@ local gui = create("ScreenGui", {
 local drawing = create("Frame", {
     Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
 }, gui)
-local panel = create("Frame", {
-    Position = UDim2.fromOffset(28, 72), Size = UDim2.fromOffset(600, 560),
-    BackgroundColor3 = Color3.fromRGB(16, 19, 27), BorderSizePixel = 0,
-    Active = true, ZIndex = 10,
-}, gui)
-corner(panel, 12)
-local border = create("UIStroke", {
-    Color = accent, Thickness = 1, Transparency = 0.3,
-}, panel)
-local header = create("TextLabel", {
-    Size = UDim2.new(1, -52, 0, 48), Position = UDim2.fromOffset(15, 0),
-    BackgroundTransparency = 1, Text = "4k hub",
-    TextColor3 = accent, TextSize = 17, Font = Enum.Font.GothamBold,
-    TextXAlignment = Enum.TextXAlignment.Left, Active = true, ZIndex = 11,
-}, panel)
-local closeButton = create("TextButton", {
-    Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -42, 0, 8),
-    BackgroundColor3 = Color3.fromRGB(33, 39, 53), Text = "×",
-    TextColor3 = Color3.new(1, 1, 1), TextSize = 23,
-    Font = Enum.Font.Gotham, BorderSizePixel = 0, ZIndex = 12,
-    Modal = true,
-}, panel)
-corner(closeButton, 7)
-local sidebar = create("Frame", {
-    Position = UDim2.fromOffset(12, 56), Size = UDim2.new(0, 108, 1, -96),
-    BackgroundColor3 = Color3.fromRGB(20, 24, 34), BorderSizePixel = 0, ZIndex = 11,
-}, panel)
-corner(sidebar, 8)
-create("UIListLayout", {Padding = UDim.new(0, 8)}, sidebar)
-create("UIPadding", {
-    PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6),
-    PaddingRight = UDim.new(0, 6),
-}, sidebar)
-local pages, tabButtons = {}, {}
+local theme = {
+    Background=Color3.fromRGB(23,19,47),
+    Card=Color3.fromRGB(31,24,60),
+    Row=Color3.fromRGB(61,53,87),
+    Accent=Color3.fromRGB(204,0,91),
+    Text=Color3.fromRGB(242,238,250),
+    Muted=Color3.fromRGB(176,164,198),
+}
+local panel = create("Frame",{
+    Position=UDim2.fromOffset(35,65),Size=UDim2.fromOffset(1120,550),
+    BackgroundTransparency=1,BorderSizePixel=0,Active=true,ZIndex=10,
+},gui)
+local hudScale=create("UIScale",{Scale=1},panel)
+local mainFrame=create("Frame",{
+    Size=UDim2.fromOffset(700,550),BackgroundColor3=theme.Background,
+    BorderSizePixel=0,ZIndex=10,
+},panel)
+local border=create("UIStroke",{Color=theme.Accent,Thickness=1},mainFrame)
+create("Frame",{
+    Position=UDim2.fromOffset(0,25),Size=UDim2.new(1,0,0,1),
+    BackgroundColor3=theme.Accent,BorderSizePixel=0,ZIndex=11,
+},mainFrame)
+local header=create("TextLabel",{
+    Position=UDim2.fromOffset(9,0),Size=UDim2.fromOffset(112,25),
+    BackgroundTransparency=1,Text="4k hub",Font=Enum.Font.GothamBold,
+    TextSize=13,TextColor3=theme.Text,TextXAlignment=Enum.TextXAlignment.Left,
+    Active=true,ZIndex=12,
+},mainFrame)
+local closeButton=create("TextButton",{
+    Position=UDim2.new(1,-27,0,2),Size=UDim2.fromOffset(23,21),
+    BackgroundTransparency=1,Text="×",TextColor3=theme.Text,
+    Font=Enum.Font.Gotham,TextSize=18,Modal=true,ZIndex=13,
+},mainFrame)
+local tabs=create("Frame",{
+    Position=UDim2.fromOffset(120,0),Size=UDim2.fromOffset(520,25),
+    BackgroundTransparency=1,ZIndex=11,
+},mainFrame)
+create("UIListLayout",{
+    FillDirection=Enum.FillDirection.Horizontal,Padding=UDim.new(0,4),
+    SortOrder=Enum.SortOrder.LayoutOrder,
+},tabs)
+local pages,tabButtons={},{}
 local list
-local activeTab = "Visual"
+local activeTab="Visual"
 local function selectTab(name)
-    activeTab = name
-    for key, page in pairs(pages) do page.Visible = key == name end
-    for key, b in pairs(tabButtons) do
-        b.BackgroundColor3 = key == name and Color3.fromRGB(37, 75, 108)
-            or Color3.fromRGB(26, 31, 43)
+    activeTab=name
+    for key,page in pairs(pages) do page.Visible=key==name end
+    for key,b in pairs(tabButtons) do
+        b.TextColor3=key==name and theme.Accent or theme.Muted
+        b.BackgroundTransparency=key==name and 0 or 1
     end
 end
-for _, name in ipairs({"Visual", "Mira", "Perfis"}) do
-    local page = create("ScrollingFrame", {
-        Name = name, Position = UDim2.fromOffset(136, 56),
-        Size = UDim2.new(1, -150, 1, -96), BackgroundTransparency = 1,
-        BorderSizePixel = 0, ScrollBarThickness = 3,
-        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
-        ZIndex = 11, Visible = name == activeTab,
-    }, panel)
-    create("UIListLayout", {Padding = UDim.new(0, 8)}, page)
-    create("UIPadding", {PaddingBottom = UDim.new(0, 8)}, page)
-    pages[name] = page
-    local b = create("TextButton", {
-        Size = UDim2.new(1, 0, 0, 36), Text = name,
-        BackgroundColor3 = Color3.fromRGB(26, 31, 43), BorderSizePixel = 0,
-        TextColor3 = Color3.fromRGB(222, 231, 248), TextSize = 12,
-        Font = Enum.Font.GothamBold, ZIndex = 12,
-    }, sidebar)
-    corner(b, 6)
-    tabButtons[name] = b
-    connect(b.Activated, function() selectTab(name) end)
+for index,name in ipairs({"Mira","Visual","Perfis"}) do
+    pages[name]=create("Frame",{
+        Name=name,Position=UDim2.fromOffset(6,36),
+        Size=UDim2.new(1,-12,1,-66),BackgroundTransparency=1,
+        ZIndex=11,Visible=name==activeTab,
+    },mainFrame)
+    local b=create("TextButton",{
+        LayoutOrder=index,Size=UDim2.fromOffset(76,25),Text=name,
+        BackgroundColor3=Color3.fromRGB(41,24,62),BorderSizePixel=0,
+        TextColor3=theme.Muted,TextSize=11,Font=Enum.Font.Gotham,ZIndex=12,
+    },tabs)
+    tabButtons[name]=b
+    connect(b.Activated,function() selectTab(name) end)
 end
-list = pages.Visual
+local function section(pageName,title,index)
+    local card=create("Frame",{
+        Position=UDim2.new((index-1)/3,2,0,0),
+        Size=UDim2.new(1/3,-7,1,0),BackgroundColor3=theme.Card,
+        BorderSizePixel=0,ZIndex=12,
+    },pages[pageName])
+    create("UIStroke",{Color=theme.Accent,Thickness=1,Transparency=0.25},card)
+    create("TextLabel",{
+        Size=UDim2.new(1,-14,0,25),Position=UDim2.fromOffset(7,0),
+        BackgroundTransparency=1,Text=title,TextColor3=theme.Text,
+        TextXAlignment=Enum.TextXAlignment.Left,Font=Enum.Font.GothamBold,
+        TextSize=11,ZIndex=13,
+    },card)
+    create("Frame",{
+        Position=UDim2.fromOffset(0,25),Size=UDim2.new(1,0,0,1),
+        BackgroundColor3=theme.Accent,BorderSizePixel=0,ZIndex=13,
+    },card)
+    local content=create("ScrollingFrame",{
+        Position=UDim2.fromOffset(6,31),Size=UDim2.new(1,-12,1,-37),
+        BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
+        ScrollBarImageColor3=theme.Accent,CanvasSize=UDim2.new(),
+        AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=13,
+    },card)
+    create("UIListLayout",{Padding=UDim.new(0,5)},content)
+    create("UIPadding",{PaddingBottom=UDim.new(0,8)},content)
+    return content
+end
+list=section("Visual","ESP / Alvos",1)
 selectTab("Visual")
-create("TextLabel", {
-    Position = UDim2.new(0, 14, 1, -30), Size = UDim2.new(1, -28, 0, 22),
-    BackgroundTransparency = 1, Text = "RightShift: menu  •  mira: botão direito",
-    TextColor3 = Color3.fromRGB(151, 160, 181), Font = Enum.Font.Gotham,
-    TextSize = 11, ZIndex = 11,
-}, panel)
-local status = create("TextLabel", {
-    Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(330, 25),
-    BackgroundColor3 = Color3.fromRGB(16, 19, 27), BackgroundTransparency = 0.15,
-    Text = "4k hub • aguardando personagens", TextColor3 = accent,
-    Font = Enum.Font.Gotham, TextSize = 12, BorderSizePixel = 0, ZIndex = 4,
-}, gui)
-corner(status, 6)
+local shortcutHint=create("TextLabel",{
+    Position=UDim2.new(0,8,1,-24),Size=UDim2.new(1,-16,0,20),
+    BackgroundTransparency=1,Text="",TextColor3=theme.Muted,
+    TextXAlignment=Enum.TextXAlignment.Left,Font=Enum.Font.Gotham,
+    TextSize=10,ZIndex=12,
+},mainFrame)
+local function refreshShortcutHint()
+    shortcutHint.Text=bindingLabel(settings.HubBind)..": menu   |   Mira: "
+        ..bindingLabel(settings.AimBind).."   |   4k hub"
+end
+table.insert(refreshControls,refreshShortcutHint)
+refreshShortcutHint()
+local status=create("TextLabel",{
+    Position=UDim2.fromOffset(12,12),Size=UDim2.fromOffset(550,25),
+    BackgroundColor3=theme.Background,Text="4k hub • aguardando personagens",
+    TextColor3=theme.Accent,Font=Enum.Font.Gotham,TextSize=11,
+    BorderSizePixel=0,ZIndex=4,
+},gui)
+
+local playerPanel=create("Frame",{
+    Position=UDim2.fromOffset(710,0),Size=UDim2.fromOffset(400,408),
+    BackgroundColor3=theme.Background,BorderSizePixel=0,ZIndex=11,
+},panel)
+create("UIStroke",{Color=theme.Accent,Thickness=1},playerPanel)
+create("TextLabel",{
+    Size=UDim2.new(1,0,0,25),BackgroundTransparency=1,Text="Jogadores",
+    TextColor3=theme.Text,Font=Enum.Font.GothamBold,TextSize=12,ZIndex=12,
+},playerPanel)
+local playerList=create("ScrollingFrame",{
+    Position=UDim2.fromOffset(6,27),Size=UDim2.new(1,-12,0,228),
+    BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=2,
+    ScrollBarImageColor3=theme.Accent,CanvasSize=UDim2.new(),
+    AutomaticCanvasSize=Enum.AutomaticSize.Y,ZIndex=12,
+},playerPanel)
+create("UIListLayout",{Padding=UDim.new(0,3),SortOrder=Enum.SortOrder.LayoutOrder},playerList)
+create("Frame",{
+    Position=UDim2.fromOffset(6,266),Size=UDim2.new(1,-12,0,1),
+    BackgroundColor3=theme.Accent,BorderSizePixel=0,ZIndex=12,
+},playerPanel)
+local avatar=create("ImageLabel",{
+    Position=UDim2.fromOffset(10,279),Size=UDim2.fromOffset(80,80),
+    BackgroundTransparency=1,Image="",ZIndex=12,
+},playerPanel)
+local playerName=create("TextLabel",{
+    Position=UDim2.fromOffset(100,280),Size=UDim2.new(1,-112,0,38),
+    BackgroundTransparency=1,Text="Selecione um jogador",TextWrapped=true,
+    TextXAlignment=Enum.TextXAlignment.Left,TextColor3=theme.Text,
+    Font=Enum.Font.GothamBold,TextSize=11,ZIndex=12,
+},playerPanel)
+local playerHealth=create("TextLabel",{
+    Position=UDim2.fromOffset(100,322),Size=UDim2.new(1,-112,0,22),
+    BackgroundTransparency=1,Text="Vida: —",TextXAlignment=Enum.TextXAlignment.Left,
+    TextColor3=theme.Muted,Font=Enum.Font.Gotham,TextSize=11,ZIndex=12,
+},playerPanel)
+local selectedPlayer
+local playerRows={}
+local function updatePlayerDetails()
+    local p=selectedPlayer
+    if not p or p.Parent~=Players then
+        playerName.Text="Selecione um jogador"
+        playerHealth.Text="Vida: —"
+        avatar.Image=""
+        return
+    end
+    playerName.Text=p.DisplayName.." (@"..p.Name..")"
+    local hum=p.Character and p.Character:FindFirstChildWhichIsA("Humanoid",true)
+    playerHealth.Text=hum and string.format("Vida: %.0f / %.0f",hum.Health,hum.MaxHealth)
+        or "Aguardando personagem"
+end
+local function choosePlayer(p)
+    selectedPlayer=p
+    avatar.Image=""
+    for owner,row in pairs(playerRows) do
+        row.BackgroundColor3=owner==p and theme.Accent or theme.Row
+    end
+    updatePlayerDetails()
+    if p then task.spawn(function()
+        local ok,url=pcall(function()
+            return Players:GetUserThumbnailAsync(p.UserId,Enum.ThumbnailType.HeadShot,
+                Enum.ThumbnailSize.Size100x100)
+        end)
+        if ok and not dead and selectedPlayer==p then avatar.Image=url end
+    end) end
+end
+local function addPlayerRow(p)
+    if playerRows[p] then return end
+    local b=create("TextButton",{
+        Size=UDim2.new(1,-3,0,22),BackgroundColor3=theme.Row,
+        BorderSizePixel=0,Text="  "..p.DisplayName,
+        TextXAlignment=Enum.TextXAlignment.Left,TextColor3=theme.Text,
+        Font=Enum.Font.Gotham,TextSize=11,ZIndex=13,
+    },playerList)
+    playerRows[p]=b
+    -- The connection is owned by the row and ends when its button is destroyed.
+    b.Activated:Connect(function() choosePlayer(p) end)
+    local sorted=Players:GetPlayers()
+    table.sort(sorted,function(a,b) return a.Name:lower()<b.Name:lower() end)
+    for index,owner in ipairs(sorted) do
+        if playerRows[owner] then playerRows[owner].LayoutOrder=index end
+    end
+end
+for _,p in ipairs(Players:GetPlayers()) do addPlayerRow(p) end
+connect(Players.PlayerAdded,addPlayerRow)
+connect(Players.PlayerRemoving,function(p)
+    local row=playerRows[p]
+    if row then row:Destroy() end
+    playerRows[p]=nil
+    if selectedPlayer==p then choosePlayer(nil) end
+end)
+local resetSelection=create("TextButton",{
+    Position=UDim2.fromOffset(10,374),Size=UDim2.fromOffset(140,24),
+    BackgroundColor3=theme.Row,BorderSizePixel=0,Text="Limpar seleção",
+    TextColor3=theme.Text,Font=Enum.Font.Gotham,TextSize=11,ZIndex=13,
+},playerPanel)
+connect(resetSelection.Activated,function() choosePlayer(nil) end)
 
 local function label(text)
     return create("TextLabel", {
         Size = UDim2.new(1, -6, 0, 24), BackgroundTransparency = 1,
-        Text = text, TextColor3 = Color3.fromRGB(155, 168, 195),
+        Text = text, TextColor3 = theme.Muted,
         TextXAlignment = Enum.TextXAlignment.Left,
-        Font = Enum.Font.GothamBold, TextSize = 11, ZIndex = 12,
+        Font = Enum.Font.GothamBold, TextSize = 10, TextWrapped = true, ZIndex = 12,
     }, list)
 end
 local function button(text, fn)
     local b = create("TextButton", {
         Size = UDim2.new(1, -6, 0, 30), BorderSizePixel = 0,
-        BackgroundColor3 = Color3.fromRGB(29, 35, 48), Text = text,
-        TextColor3 = Color3.fromRGB(229, 234, 246), TextSize = 12,
-        Font = Enum.Font.Gotham, ZIndex = 12,
+        BackgroundColor3 = theme.Row, Text = text,
+        TextColor3 = theme.Text, TextSize = 10,
+        Font = Enum.Font.Gotham, TextWrapped = true, ZIndex = 12,
     }, list)
     corner(b, 6)
     connect(b.Activated, function() fn(b) end)
     return b
 end
 local function toggle(key, text)
+    local marker
     local function refresh(b)
-        b.Text = text .. "     " .. (settings[key] and "ON" or "OFF")
-        b.TextColor3 = settings[key] and Color3.fromRGB(112, 225, 202)
-            or Color3.fromRGB(170, 177, 195)
+        b.Text = "      " .. text
+        b.TextColor3 = settings[key] and theme.Text or theme.Muted
+        if marker then marker.BackgroundColor3 = settings[key] and theme.Accent or theme.Row end
     end
     local b = button("", function(item)
         settings[key] = not settings[key]
         refresh(item)
     end)
+    b.BackgroundTransparency = 1
+    b.TextXAlignment = Enum.TextXAlignment.Left
+    b.TextSize = 10
+    marker = create("Frame", {
+        Size=UDim2.fromOffset(10,10), Position=UDim2.new(0,0,0.5,-5),
+        BorderSizePixel=0, BackgroundColor3=theme.Row, ZIndex=13,
+    }, b)
     table.insert(refreshControls, function() refresh(b) end)
     refresh(b)
 end
@@ -166,16 +352,16 @@ local function slider(key, text, low, high, step)
     local caption = create("TextLabel", {
         Size = UDim2.new(1, 0, 0, 21), BackgroundTransparency = 1,
         TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham,
-        TextSize = 12, TextColor3 = Color3.fromRGB(218, 225, 240), ZIndex = 13,
+        TextSize = 12, TextColor3 = theme.Text, ZIndex = 13,
     }, row)
     local track = create("TextButton", {
         Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 12),
-        BackgroundColor3 = Color3.fromRGB(36, 44, 61), BorderSizePixel = 0,
+        BackgroundColor3 = theme.Row, BorderSizePixel = 0,
         Text = "", AutoButtonColor = false, ZIndex = 13,
     }, row)
     corner(track, 6)
     local fill = create("Frame", {
-        BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 14,
+        BackgroundColor3 = theme.Accent, BorderSizePixel = 0, ZIndex = 14,
     }, track)
     corner(fill, 6)
     local function refresh()
@@ -202,6 +388,7 @@ label("VISUAL")
 toggle("ESP", "ESP geral")
 toggle("ESPPlayers", "ESP em jogadores")
 toggle("ESPNPCs", "ESP em NPCs")
+list = section("Visual","Estilo do ESP",2)
 toggle("Boxes", "Box")
 local boxStyleButton = button("Box: " .. settings.BoxStyle, function(b)
     settings.BoxStyle = settings.BoxStyle == "Completa" and "Cantos" or "Completa"
@@ -212,20 +399,23 @@ toggle("Skeleton", "Skeleton R6 / R15")
 toggle("Names", "Nome")
 toggle("Distance", "Distância em studs")
 toggle("Health", "Vida")
+list = section("Visual","Ajustes visuais",3)
 slider("Range", "Distância máxima", 50, 3000, 10)
 slider("Thickness", "Espessura", 1, 5, 1)
 slider("Hue", "Cor", 0, 1, 0.01)
-list = pages.Mira
+list = section("Mira","Ativação",1)
 label("MIRA")
 toggle("Aim", "Aimbot")
 toggle("AimPlayers", "Mira em jogadores")
 toggle("Sticky", "Manter alvo enquanto válido")
 toggle("AimNPCs", "Mira em NPCs")
 toggle("Instant", "Rage / alinhamento instantâneo")
+list = section("Mira","Filtros / FOV",2)
 toggle("TeamFilter", "Ignorar aliados")
 toggle("VisibleOnly", "Verificar obstáculos")
 toggle("Circle", "Círculo FOV")
 slider("Radius", "Raio do FOV em pixels", 20, 700, 5)
+list = section("Mira","Ajustes de mira",3)
 slider("Strength", "Intensidade da mira", 1, 40, 1)
 local targetButton = button("Alvo: Head", function(b)
     settings.Target = settings.Target == "Head" and "HumanoidRootPart" or "Head"
@@ -233,11 +423,43 @@ local targetButton = button("Alvo: Head", function(b)
 end)
 table.insert(refreshControls, function() targetButton.Text = "Alvo: " .. settings.Target end)
 label("MENU ABERTO PAUSA A MIRA")
-list = pages.Perfis
+list = section("Perfis","Atalhos",1)
+label("ATALHOS — ESC CANCELA A ESCOLHA")
+local bindingButtons = {}
+local bindingNames = {HubBind = "Abrir / fechar HUD", AimBind = "Ativar mira"}
+local function refreshBindingButtons()
+    for key, b in pairs(bindingButtons) do
+        b.Text = pendingBind == key and "Pressione uma tecla ou botão do mouse..."
+            or (bindingNames[key] .. ": " .. bindingLabel(settings[key]))
+    end
+    refreshShortcutHint()
+end
+for _, key in ipairs({"HubBind", "AimBind"}) do
+    bindingButtons[key] = button("", function()
+        pendingBind, aimLatched = key, false
+        refreshBindingButtons()
+    end)
+end
+table.insert(refreshControls, refreshBindingButtons)
+refreshBindingButtons()
+local bindingMessage = label("Clique no atalho e pressione a nova tecla.")
+bindingMessage.TextWrapped = true
+bindingMessage.Size = UDim2.new(1,-6,0,40)
+local aimModeButton = button("",function(b)
+    settings.AimMode = settings.AimMode == "Segurar" and "Alternar" or "Segurar"
+    aimLatched = false
+    b.Text = "Modo da tecla de mira: " .. settings.AimMode
+end)
+local function refreshAimMode()
+    aimModeButton.Text = "Modo da tecla de mira: " .. settings.AimMode
+end
+table.insert(refreshControls,refreshAimMode)
+refreshAimMode()
+list = section("Perfis","Configurações",2)
 label("PERFIL EM TEXTO / JSON")
 local profileBox = create("TextBox", {
-    Size = UDim2.new(1, -6, 0, 154), BackgroundColor3 = Color3.fromRGB(25, 30, 43),
-    TextColor3 = Color3.fromRGB(200, 218, 242), Font = Enum.Font.Code, TextSize = 12,
+    Size = UDim2.new(1, -6, 0, 154), BackgroundColor3 = theme.Row,
+    TextColor3 = theme.Text, Font = Enum.Font.Code, TextSize = 12,
     Text = "", PlaceholderText = "Exporte um perfil ou cole um JSON aqui.",
     ClearTextOnFocus = false, MultiLine = true, TextWrapped = true,
     TextXAlignment = Enum.TextXAlignment.Left,
@@ -277,6 +499,18 @@ button("Importar configuração", function()
                 return
             end
             candidate[key] = math.clamp(value, limits[key][1], limits[key][2])
+        elseif key == "HubBind" or key == "AimBind" then
+            if not validBinding(value) then
+                profileStatus.Text = "Atalho inválido: " .. key
+                return
+            end
+            candidate[key] = value
+        elseif key == "AimMode" then
+            if value ~= "Segurar" and value ~= "Alternar" then
+                profileStatus.Text = "Modo de mira inválido."
+                return
+            end
+            candidate[key] = value
         elseif key == "Target" then
             if value ~= "Head" and value ~= "HumanoidRootPart" then
                 profileStatus.Text = "Alvo inválido."
@@ -291,11 +525,17 @@ button("Importar configuração", function()
             candidate[key] = value
         else candidate[key] = value end
     end
+    if candidate.HubBind == candidate.AimBind then
+        profileStatus.Text = "HUD e mira precisam de atalhos diferentes."
+        return
+    end
+    resetInputState()
     for key, value in pairs(candidate) do settings[key] = value end
     for _, refresh in ipairs(refreshControls) do refresh() end
     profileStatus.Text = "Perfil aplicado."
 end)
 button("Restaurar padrões", function()
+    resetInputState()
     for key, value in pairs(defaults) do settings[key] = value end
     for _, refresh in ipairs(refreshControls) do refresh() end
     profileStatus.Text = "Configuração padrão restaurada."
@@ -307,6 +547,8 @@ local function releaseMouse()
     UIS.MouseIconEnabled = true
 end
 local function setMenu(open)
+    resetInputState()
+    refreshBindingButtons()
     if open and not menuOpen then
         savedBehavior, savedIcon = UIS.MouseBehavior, UIS.MouseIconEnabled
     elseif not open and menuOpen then
@@ -342,16 +584,47 @@ connect(UIS.InputChanged, function(input)
     end
 end)
 connect(UIS.InputEnded, function(input)
+    if inputBinding(input) == bindingRelease then bindingRelease = nil end
     if input.UserInputType == Enum.UserInputType.MouseButton1 then
         sliderDrag, panelDrag = nil, false
     end
 end)
-connect(UIS.InputBegan, function(input)
-    if input.KeyCode == Enum.KeyCode.RightShift and not UIS:GetFocusedTextBox() then
+connect(UIS.InputBegan, function(input, processed)
+    if pendingBind then
+        if input.KeyCode == Enum.KeyCode.Escape then
+            pendingBind = nil
+            bindingMessage.Text = "Escolha cancelada. Atalho anterior mantido."
+            refreshBindingButtons()
+            return
+        end
+        local value = inputBinding(input)
+        if not value then return end
+        local other = pendingBind == "HubBind" and "AimBind" or "HubBind"
+        if value == settings[other] then
+            bindingMessage.Text = "Esse atalho já está em uso. Escolha outro ou pressione Esc."
+            return
+        end
+        settings[pendingBind] = value
+        pendingBind, bindingRelease, aimLatched = nil, value, false
+        bindingMessage.Text = "Atalho atualizado."
+        refreshBindingButtons()
+        return
+    end
+    if UIS:GetFocusedTextBox() or GuiService.MenuIsOpen then return end
+    local value = inputBinding(input)
+    if menuOpen and processed and mouseBindings[value] then return end
+    if value == settings.HubBind then
         setMenu(not menuOpen)
+    elseif value == settings.AimBind and settings.AimMode == "Alternar"
+        and settings.Aim and not menuOpen then
+        aimLatched = not aimLatched
     end
 end)
-connect(UIS.WindowFocusReleased, function() sliderDrag, panelDrag = nil, false end)
+connect(UIS.WindowFocusReleased, function()
+    sliderDrag, panelDrag = nil, false
+    resetInputState()
+    refreshBindingButtons()
+end)
 
 local circle = create("Frame", {
     AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1,
@@ -372,8 +645,9 @@ local function drawLine(obj, a, b)
     obj.BackgroundColor3 = accent
     obj.Visible = true
 end
+list = section("Perfis","Diagnóstico",3)
 local diagnostics = label("Diagnóstico: aguardando personagens")
-diagnostics.Size = UDim2.new(1,-6,0,100)
+diagnostics.Size = UDim2.new(1,-6,0,160)
 diagnostics.TextWrapped = true
 diagnostics.TextYAlignment = Enum.TextYAlignment.Top
 
@@ -579,10 +853,10 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
     if not camera then return end
     if menuOpen then releaseMouse() end
     accent=Color3.fromHSV(settings.Hue,0.7,1)
-    header.TextColor3,border.Color,status.TextColor3=accent,accent,accent
+    header.TextColor3,border.Color,status.TextColor3=theme.Text,theme.Accent,theme.Accent
     local view=camera.ViewportSize
-    panel.Size=UDim2.fromOffset(math.min(600,math.max(280,view.X-24)),
-        math.min(560,math.max(200,view.Y-100)))
+    panel.Size=UDim2.fromOffset(1120,550)
+    hudScale.Scale=math.min(1,math.max(0.25,math.min((view.X-24)/1120,(view.Y-70)/550)))
     if not panelDrag then panel.Position=UDim2.fromOffset(
         math.clamp(panel.Position.X.Offset,0,math.max(0,view.X-panel.AbsoluteSize.X)),
         math.clamp(panel.Position.Y.Offset,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end
@@ -596,13 +870,13 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
     circleStroke.Color=accent
     elapsed+=dt
     local refreshed=elapsed>=0.35
-    if refreshed then elapsed=0; synchronize(camera) end
+    if refreshed then elapsed=0; synchronize(camera); updatePlayerDetails() end
     local own=player.Character
     local ownHum=own and own:FindFirstChildWhichIsA("Humanoid",true)
     local ownRoot=own and bodyPart(own,"HumanoidRootPart")
     local origin=ownRoot and ownRoot.Position or camera.CFrame.Position
     local aiming=settings.Aim and not menuOpen and own and (not ownHum or ownHum.Health>0)
-        and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        and aimInputActive()
         and not UIS:GetFocusedTextBox() and not GuiService.MenuIsOpen
     if not aiming then locked=nil end
     local best,bestPosition,bestScore=nil,nil,settings.Radius
@@ -654,7 +928,8 @@ RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt
         status.Text=string.format("4k hub • jogadores %d • NPCs %d • ESP %d • aim %s",
             playerCount,npcCount,drawn,settings.Aim and "ON" or "OFF")
         diagnostics.Text=string.format(
-            "PlaceId: %s\nElegíveis: %d jogadores / %d NPCs\nESP na tela: %d\nNPCs precisam de Model + Humanoid vivo.\nMira: botão direito; menu aberto pausa a mira.",
-            tostring(game.PlaceId),playerCount,npcCount,drawn)
+            "PlaceId: %s\nElegíveis: %d jogadores / %d NPCs\nESP na tela: %d\nNPCs precisam de Model + Humanoid vivo.\nMira: %s (%s); menu aberto pausa a mira.",
+            tostring(game.PlaceId),playerCount,npcCount,drawn,
+            bindingLabel(settings.AimBind),settings.AimMode)
     end
 end)
