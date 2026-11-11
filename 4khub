@@ -1,4 +1,4 @@
--- Luau · RevolverArenaVisual.client.luau · Roblox client · Roblox Luau runtime
+-- Luau · 4kHub.client.luau · Roblox client · Roblox Luau runtime
 -- Compatibility is unverified. Uses standard Player.Character/Humanoid rigs.
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -12,9 +12,9 @@ local old = playerGui:FindFirstChild("BloxVisualHUD")
 if old then old:Destroy() end
 
 local settings = {
-    ESP = true, Boxes = true, Skeleton = true, Names = true,
+    ESP = true, ESPPlayers = true, ESPNPCs = false, Boxes = true, Skeleton = true, Names = true,
     Distance = true, Health = true, TeamFilter = false,
-    Aim = false, Instant = false, VisibleOnly = true, Circle = true,
+    Aim = false, AimPlayers = true, AimNPCs = false, Sticky = true, Instant = false, VisibleOnly = true, Circle = true,
     Radius = 160, Strength = 8, Range = 1000, Thickness = 2,
     Hue = 0.57, Target = "Head", BoxStyle = "Completa",
 }
@@ -119,7 +119,7 @@ create("TextLabel", {
     TextSize = 11, ZIndex = 11,
 }, panel)
 local status = create("TextLabel", {
-    Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(510, 25),
+    Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(330, 25),
     BackgroundColor3 = Color3.fromRGB(16, 19, 27), BackgroundTransparency = 0.15,
     Text = "4k hub • aguardando personagens", TextColor3 = accent,
     Font = Enum.Font.Gotham, TextSize = 12, BorderSizePixel = 0, ZIndex = 4,
@@ -200,6 +200,8 @@ end
 
 label("VISUAL")
 toggle("ESP", "ESP geral")
+toggle("ESPPlayers", "ESP em jogadores")
+toggle("ESPNPCs", "ESP em NPCs")
 toggle("Boxes", "Box")
 local boxStyleButton = button("Box: " .. settings.BoxStyle, function(b)
     settings.BoxStyle = settings.BoxStyle == "Completa" and "Cantos" or "Completa"
@@ -216,8 +218,11 @@ slider("Hue", "Cor", 0, 1, 0.01)
 list = pages.Mira
 label("MIRA")
 toggle("Aim", "Aimbot")
+toggle("AimPlayers", "Mira em jogadores")
+toggle("Sticky", "Manter alvo enquanto válido")
+toggle("AimNPCs", "Mira em NPCs")
 toggle("Instant", "Rage / alinhamento instantâneo")
-toggle("TeamFilter", "Ignorar aliados — desligado no FFA")
+toggle("TeamFilter", "Ignorar aliados")
 toggle("VisibleOnly", "Verificar obstáculos")
 toggle("Circle", "Círculo FOV")
 slider("Radius", "Raio do FOV em pixels", 20, 700, 5)
@@ -246,11 +251,6 @@ create("UIPadding", {
 local profileStatus = label("Perfis não são gravados automaticamente em disco.")
 profileStatus.TextWrapped = true
 profileStatus.Size = UDim2.new(1, -6, 0, 40)
-local diagnostics = label("Diagnóstico: aguardando atualização")
-diagnostics.Size = UDim2.new(1, -6, 0, 125)
-diagnostics.TextWrapped = true
-diagnostics.TextYAlignment = Enum.TextYAlignment.Top
-diagnostics.TextXAlignment = Enum.TextXAlignment.Left
 local limits = {
     Radius = {20,700}, Strength = {1,40}, Range = {50,3000},
     Thickness = {1,5}, Hue = {0,1},
@@ -372,231 +372,289 @@ local function drawLine(obj, a, b)
     obj.BackgroundColor3 = accent
     obj.Visible = true
 end
-local function addPlayer(p)
-    if p == player or records[p] then return end
-    local root = create("Frame", {
-        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false,
-    }, drawing)
-    local box = create("Frame", {BackgroundTransparency = 1, BorderSizePixel = 0}, root)
-    local stroke = create("UIStroke", {Thickness = 2}, box)
-    local text = create("TextLabel", {
-        AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(280, 48),
-        BackgroundTransparency = 1, TextStrokeTransparency = 0.2,
-        Font = Enum.Font.GothamBold, TextSize = 12,
-        TextYAlignment = Enum.TextYAlignment.Bottom,
-    }, root)
-    local health = create("Frame", {BorderSizePixel = 0}, root)
-    records[p] = {Root=root, Box=box, Stroke=stroke, Text=text,
-        Health=health, Lines={}, Corners={}, Character=nil, Joints={}, RigConnections={}}
+local diagnostics = label("Diagnóstico: aguardando personagens")
+diagnostics.Size = UDim2.new(1,-6,0,100)
+diagnostics.TextWrapped = true
+diagnostics.TextYAlignment = Enum.TextYAlignment.Top
+
+local humanoids = {}
+local function register(object)
+    if object:IsA("Humanoid") then humanoids[object] = true end
 end
-local function disconnectRig(record)
-    for _, c in ipairs(record.RigConnections) do c:Disconnect() end
-    table.clear(record.RigConnections)
+connect(workspace.DescendantAdded,register)
+connect(workspace.DescendantRemoving,function(object) humanoids[object] = nil end)
+for _, object in ipairs(workspace:GetDescendants()) do register(object) end
+
+local function bodyPart(model,name)
+    local part = model:FindFirstChild(name,true)
+    if part and part:IsA("BasePart") then return part end
+    return nil
 end
-local function bindRig(record, character)
-    disconnectRig(record)
-    record.Character = character
-    table.clear(record.Joints)
-    local function add(object)
-        if object:IsA("Motor6D") then record.Joints[object] = true end
+local function excluded(part)
+    return part:FindFirstAncestorOfClass("Tool")
+        or part:FindFirstAncestorOfClass("Accessory")
+end
+local function refreshRig(record)
+    record.Dirty = false
+    record.Parts,record.Joints = {},{}
+    for _, object in ipairs(record.Model:GetDescendants()) do
+        if object:IsA("BasePart") and not excluded(object) then
+            table.insert(record.Parts,object)
+        elseif object:IsA("Motor6D") and not excluded(object) then
+            table.insert(record.Joints,object)
+        end
     end
-    for _, obj in ipairs(character:GetDescendants()) do add(obj) end
-    table.insert(record.RigConnections, character.DescendantAdded:Connect(add))
-    table.insert(record.RigConnections, character.DescendantRemoving:Connect(function(obj)
-        record.Joints[obj] = nil
-    end))
 end
-local function removePlayer(p)
-    local record = records[p]
-    if record then disconnectRig(record); record.Root:Destroy() end
-    records[p] = nil
+local function newRecord(model,owner,humanoid)
+    local root = create("Frame",{
+        Size=UDim2.fromScale(1,1),BackgroundTransparency=1,Visible=false,
+    },drawing)
+    local box = create("Frame",{BackgroundTransparency=1,BorderSizePixel=0},root)
+    local record = {
+        Model=model,Owner=owner,Humanoid=humanoid,Root=root,Box=box,
+        Stroke=create("UIStroke",{Thickness=2},box),
+        Text=create("TextLabel",{
+            Size=UDim2.fromOffset(360,40),AnchorPoint=Vector2.new(0.5,1),
+            BackgroundTransparency=1,TextStrokeTransparency=0.2,
+            Font=Enum.Font.GothamBold,TextSize=12,
+            TextYAlignment=Enum.TextYAlignment.Bottom,
+        },root),
+        Health=create("Frame",{BorderSizePixel=0},root),
+        Lines={},Corners={},Parts={},Joints={},Dirty=true,Connections={},
+    }
+    local function changed() record.Dirty = true end
+    table.insert(record.Connections,model.DescendantAdded:Connect(changed))
+    table.insert(record.Connections,model.DescendantRemoving:Connect(changed))
+    records[model] = record
+    return record
 end
-for _, p in ipairs(Players:GetPlayers()) do addPlayer(p) end
-connect(Players.PlayerAdded, addPlayer)
-connect(Players.PlayerRemoving, removePlayer)
-local function project(camera, position)
-    local p, shown = camera:WorldToViewportPoint(position)
-    return Vector2.new(p.X,p.Y), shown and p.Z > 0
+local function removeRecord(model)
+    local record = records[model]
+    if not record then return end
+    for _, c in ipairs(record.Connections) do c:Disconnect() end
+    record.Root:Destroy()
+    records[model] = nil
 end
-local function bounds(camera, character)
-    local cf, size = character:GetBoundingBox()
-    local lo, hi = Vector2.new(math.huge, math.huge), Vector2.new(-math.huge,-math.huge)
-    for x=-1,1,2 do for y=-1,1,2 do for z=-1,1,2 do
-        local p = camera:WorldToViewportPoint(cf:PointToWorldSpace(
-            Vector3.new(size.X*x/2,size.Y*y/2,size.Z*z/2)))
-        if p.Z <= 0 then return nil end
-        lo = Vector2.new(math.min(lo.X,p.X),math.min(lo.Y,p.Y))
-        hi = Vector2.new(math.max(hi.X,p.X),math.max(hi.Y,p.Y))
-    end end end
-    if hi.X < 0 or hi.Y < 0 or lo.X > camera.ViewportSize.X
-        or lo.Y > camera.ViewportSize.Y then return nil end
-    return lo, hi
+local function ownerOf(model,owners)
+    for character,owner in pairs(owners) do
+        if model == character or model:IsDescendantOf(character) then return owner end
+    end
+    return nil
+end
+local function synchronize(camera)
+    local wanted,owners = {},{}
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p.Character then owners[p.Character] = p end
+        if p ~= player and p.Character and p.Character:IsDescendantOf(workspace) then
+            local hum = p.Character:FindFirstChildWhichIsA("Humanoid",true)
+            if hum then wanted[p.Character] = {Owner=p,Humanoid=hum} end
+        end
+    end
+    if settings.ESPNPCs or settings.AimNPCs then
+        for hum in pairs(humanoids) do
+            local model = hum.Parent
+            if model and model:IsA("Model") and model:IsDescendantOf(workspace)
+                and not model:IsDescendantOf(camera) and not excluded(model)
+                and not ownerOf(model,owners) then
+                wanted[model] = {Humanoid=hum}
+            end
+        end
+    end
+    for model, info in pairs(wanted) do
+        local record = records[model] or newRecord(model,info.Owner,info.Humanoid)
+        record.Owner,record.Humanoid = info.Owner,info.Humanoid
+    end
+    local stale = {}
+    for model in pairs(records) do
+        if not wanted[model] then table.insert(stale,model) end
+    end
+    for _, model in ipairs(stale) do removeRecord(model) end
+end
+local function project(camera,position)
+    local p,visible = camera:WorldToViewportPoint(position)
+    return Vector2.new(p.X,p.Y),visible and p.Z > 0
+end
+local function bounds(camera,record)
+    local lo,hi = Vector2.new(math.huge,math.huge),Vector2.new(-math.huge,-math.huge)
+    local found = false
+    for _, part in ipairs(record.Parts) do
+        if not part:IsDescendantOf(record.Model) then continue end
+        local half = part.Size/2
+        for x=-1,1,2 do for y=-1,1,2 do for z=-1,1,2 do
+            local point = camera:WorldToViewportPoint(part.CFrame:PointToWorldSpace(
+                Vector3.new(half.X*x,half.Y*y,half.Z*z)))
+            if point.Z <= 0 then return nil end
+            found = true
+            lo=Vector2.new(math.min(lo.X,point.X),math.min(lo.Y,point.Y))
+            hi=Vector2.new(math.max(hi.X,point.X),math.max(hi.Y,point.Y))
+        end end end
+    end
+    if not found or hi.X<0 or hi.Y<0 or lo.X>camera.ViewportSize.X
+        or lo.Y>camera.ViewportSize.Y then return nil end
+    return lo,hi
 end
 local params = RaycastParams.new()
 params.FilterType = Enum.RaycastFilterType.Exclude
-local function unobstructed(camera, character, position)
+local function visible(camera,record,position)
     local ignore = {camera}
-    if player.Character then table.insert(ignore, player.Character) end
+    if player.Character then table.insert(ignore,player.Character) end
     params.FilterDescendantsInstances = ignore
-    local hit = workspace:Raycast(camera.CFrame.Position,
-        position-camera.CFrame.Position, params)
-    return not hit or hit.Instance:IsDescendantOf(character)
+    local hit = workspace:Raycast(camera.CFrame.Position,position-camera.CFrame.Position,params)
+    return not hit or hit.Instance:IsDescendantOf(record.Model)
 end
-local function findBodyPart(character, preferred)
-    for _, name in ipairs({preferred, "HumanoidRootPart", "UpperTorso", "Torso", "Head"}) do
-        local part = character:FindFirstChild(name, true)
-        if part and part:IsA("BasePart")
-            and not part:FindFirstAncestorOfClass("Tool")
-            and not part:FindFirstAncestorOfClass("Accessory") then return part end
+local function renderESP(camera,record,distance)
+    local lo,hi = bounds(camera,record)
+    if not lo then return end
+    record.Root.Visible=true
+    record.Box.Visible=settings.Boxes and settings.BoxStyle=="Completa"
+    record.Box.Position=UDim2.fromOffset(lo.X,lo.Y)
+    record.Box.Size=UDim2.fromOffset(hi.X-lo.X,hi.Y-lo.Y)
+    record.Stroke.Color,record.Stroke.Thickness=accent,settings.Thickness
+    if settings.Boxes and settings.BoxStyle=="Cantos" then
+        local w,h=(hi.X-lo.X)*0.23,(hi.Y-lo.Y)*0.19
+        local segments={
+            {lo,lo+Vector2.new(w,0)},{lo,lo+Vector2.new(0,h)},
+            {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X-w,lo.Y)},
+            {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X,lo.Y+h)},
+            {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X+w,hi.Y)},
+            {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X,hi.Y-h)},
+            {hi,hi-Vector2.new(w,0)},{hi,hi-Vector2.new(0,h)},
+        }
+        for index,segment in ipairs(segments) do
+            record.Corners[index]=record.Corners[index] or newLine(record.Root)
+            drawLine(record.Corners[index],segment[1],segment[2])
+        end
     end
-    return character.PrimaryPart
+    local hum=record.Humanoid
+    local text={}
+    if settings.Names then table.insert(text,record.Owner and record.Owner.DisplayName
+        or ("[NPC] "..record.Model.Name)) end
+    if settings.Distance then table.insert(text,string.format("%.0f studs",distance)) end
+    if settings.Health then table.insert(text,string.format("HP %.0f",hum.Health)) end
+    record.Text.Visible=#text>0
+    record.Text.Text=table.concat(text," | ")
+    record.Text.TextColor3=accent
+    record.Text.Position=UDim2.fromOffset((lo.X+hi.X)/2,lo.Y-4)
+    local fraction=math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+    record.Health.Visible=settings.Health
+    record.Health.Size=UDim2.fromOffset(3,(hi.Y-lo.Y)*fraction)
+    record.Health.Position=UDim2.fromOffset(lo.X-6,hi.Y-(hi.Y-lo.Y)*fraction)
+    record.Health.BackgroundColor3=Color3.fromHSV(fraction/3,0.8,1)
+    if settings.Skeleton then
+        local index=0
+        for _,joint in ipairs(record.Joints) do
+            local a,b=joint.Part0,joint.Part1
+            if not a or not b or not a:IsDescendantOf(record.Model)
+                or not b:IsDescendantOf(record.Model) or excluded(a) or excluded(b) then continue end
+            local pa,va=project(camera,a.Position)
+            local pb,vb=project(camera,b.Position)
+            if va and vb then
+                index+=1
+                record.Lines[index]=record.Lines[index] or newLine(record.Root)
+                drawLine(record.Lines[index],pa,pb)
+            end
+        end
+    end
 end
 local function cleanup()
     if dead then return end
-    dead = true
+    dead=true
     RunService:UnbindFromRenderStep(binding)
-    for _, c in ipairs(connections) do c:Disconnect() end
-    for _, record in pairs(records) do disconnectRig(record) end
+    for _,c in ipairs(connections) do c:Disconnect() end
+    local models={}
+    for model in pairs(records) do table.insert(models,model) end
+    for _,model in ipairs(models) do removeRecord(model) end
+    table.clear(humanoids)
     if menuOpen then
-        if savedBehavior then UIS.MouseBehavior = savedBehavior end
-        if savedIcon ~= nil then UIS.MouseIconEnabled = savedIcon end
+        if savedBehavior then UIS.MouseBehavior=savedBehavior end
+        if savedIcon~=nil then UIS.MouseIconEnabled=savedIcon end
     end
 end
 gui.Destroying:Connect(cleanup)
-button("Encerrar e remover HUD", function() gui:Destroy() end)
-
-local statsElapsed = 0
-RunService:BindToRenderStep(binding, Enum.RenderPriority.Last.Value + 1, function(dt)
+button("Encerrar e remover HUD",function() gui:Destroy() end)
+local elapsed,locked=1,nil
+RunService:BindToRenderStep(binding,Enum.RenderPriority.Last.Value+1,function(dt)
     if dead then return end
-    local camera = workspace.CurrentCamera
+    local camera=workspace.CurrentCamera
     if not camera then return end
     if menuOpen then releaseMouse() end
-    accent = Color3.fromHSV(settings.Hue,0.7,1)
-    header.TextColor3, border.Color, status.TextColor3 = accent,accent,accent
-    local view = camera.ViewportSize
-    panel.Size = UDim2.fromOffset(math.min(600, math.max(280, view.X-24)),
-        math.min(560, math.max(200, view.Y-100)))
-    if not panelDrag then
-        panel.Position = UDim2.fromOffset(
-            math.clamp(panel.Position.X.Offset,0,math.max(0,view.X-panel.AbsoluteSize.X)),
-            math.clamp(panel.Position.Y.Offset,0,math.max(0,view.Y-panel.AbsoluteSize.Y)))
-    end
-    local inset = GuiService:GetGuiInset()
-    status.Position = UDim2.fromOffset(12, inset.Y+8)
-    local center = view/2
-    status.Size = UDim2.fromOffset(math.min(510, math.max(200,view.X-24)),25)
-    circle.Position = UDim2.fromOffset(center.X,center.Y)
-    circle.Size = UDim2.fromOffset(settings.Radius*2,settings.Radius*2)
-    circle.Visible = settings.Aim and settings.Circle
-    circleStroke.Color = accent
-    local localRoot = player.Character and findBodyPart(player.Character,"HumanoidRootPart")
-    local origin = localRoot and localRoot.Position or camera.CFrame.Position
-    local bestPosition, bestScore, tracked = nil, settings.Radius, 0
-    local counts = {total=0,noCharacter=0,noHumanoid=0,noRoot=0,dead=0,team=0,range=0}
-    local ownHumanoid = player.Character and player.Character:FindFirstChildWhichIsA("Humanoid",true)
-    local aiming = settings.Aim and not menuOpen and player.Character
-        and (not ownHumanoid or ownHumanoid.Health > 0)
+    accent=Color3.fromHSV(settings.Hue,0.7,1)
+    header.TextColor3,border.Color,status.TextColor3=accent,accent,accent
+    local view=camera.ViewportSize
+    panel.Size=UDim2.fromOffset(math.min(600,math.max(280,view.X-24)),
+        math.min(560,math.max(200,view.Y-100)))
+    if not panelDrag then panel.Position=UDim2.fromOffset(
+        math.clamp(panel.Position.X.Offset,0,math.max(0,view.X-panel.AbsoluteSize.X)),
+        math.clamp(panel.Position.Y.Offset,0,math.max(0,view.Y-panel.AbsoluteSize.Y))) end
+    local inset=GuiService:GetGuiInset()
+    status.Position=UDim2.fromOffset(12,inset.Y+8)
+    status.Size=UDim2.fromOffset(math.min(550,math.max(200,view.X-24)),25)
+    local center=view/2
+    circle.Position=UDim2.fromOffset(center.X,center.Y)
+    circle.Size=UDim2.fromOffset(settings.Radius*2,settings.Radius*2)
+    circle.Visible=settings.Aim and settings.Circle
+    circleStroke.Color=accent
+    elapsed+=dt
+    local refreshed=elapsed>=0.35
+    if refreshed then elapsed=0; synchronize(camera) end
+    local own=player.Character
+    local ownHum=own and own:FindFirstChildWhichIsA("Humanoid",true)
+    local ownRoot=own and bodyPart(own,"HumanoidRootPart")
+    local origin=ownRoot and ownRoot.Position or camera.CFrame.Position
+    local aiming=settings.Aim and not menuOpen and own and (not ownHum or ownHum.Health>0)
         and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
         and not UIS:GetFocusedTextBox() and not GuiService.MenuIsOpen
-    for p, record in pairs(records) do
-        counts.total += 1
-        record.Root.Visible = false
-        for _, l in ipairs(record.Lines) do l.Visible = false end
-        for _, l in ipairs(record.Corners) do l.Visible = false end
-        local character = p.Character
-        if not character then counts.noCharacter += 1; continue end
-        if record.Character ~= character then bindRig(record, character) end
-        local hum = character:FindFirstChildWhichIsA("Humanoid",true)
-        local root = findBodyPart(character,"HumanoidRootPart")
-        local target = findBodyPart(character,settings.Target)
-        if not hum then counts.noHumanoid += 1; continue end
-        if hum.Health <= 0 then counts.dead += 1; continue end
-        if not root then counts.noRoot += 1; continue end
-        local allied = player.Team ~= nil and p.Team == player.Team
-            and not player.Neutral and not p.Neutral
-        if settings.TeamFilter and allied then counts.team += 1; continue end
-        local distance = (root.Position-origin).Magnitude
-        if distance > settings.Range then counts.range += 1; continue end
-        tracked += 1
-        if aiming and target and target:IsA("BasePart") then
-            local point, shown = project(camera,target.Position)
-            local score = (point-center).Magnitude
-            if shown and score < bestScore and (not settings.VisibleOnly
-                or unobstructed(camera,character,target.Position)) then
-                bestPosition, bestScore = target.Position,score
+    if not aiming then locked=nil end
+    local best,bestPosition,bestScore=nil,nil,settings.Radius
+    local retained,retainedPosition=nil,nil
+    local playerCount,npcCount,drawn=0,0,0
+    for model,record in pairs(records) do
+        record.Root.Visible=false
+        for _,line in ipairs(record.Lines) do line.Visible=false end
+        for _,line in ipairs(record.Corners) do line.Visible=false end
+        if not model:IsDescendantOf(workspace) or model:IsDescendantOf(camera)
+            or model==own or (own and model:IsDescendantOf(own)) then continue end
+        local hum=record.Humanoid
+        if not hum or not hum:IsDescendantOf(model) or hum.Health<=0 then continue end
+        if record.Dirty then refreshRig(record) end
+        local owner=record.Owner
+        if owner and settings.TeamFilter and player.Team and owner.Team==player.Team
+            and not player.Neutral and not owner.Neutral then continue end
+        local target=bodyPart(model,settings.Target) or bodyPart(model,"HumanoidRootPart")
+            or bodyPart(model,"Head") or bodyPart(model,"UpperTorso")
+            or bodyPart(model,"Torso") or model.PrimaryPart
+        if not target or excluded(target) then continue end
+        local distance=(target.Position-origin).Magnitude
+        if distance>settings.Range then continue end
+        if owner then playerCount+=1 else npcCount+=1 end
+        local aimAllowed=(owner and settings.AimPlayers) or (not owner and settings.AimNPCs)
+        if aiming and aimAllowed then
+            local point,onScreen=project(camera,target.Position)
+            local score=(point-center).Magnitude
+            if onScreen and score<=settings.Radius and (not settings.VisibleOnly
+                or visible(camera,record,target.Position)) then
+                if score<bestScore then best,bestPosition,bestScore=model,target.Position,score end
+                if settings.Sticky and model==locked then retained,retainedPosition=model,target.Position end
             end
         end
-        if not settings.ESP then continue end
-        local lo,hi = bounds(camera,character)
-        if not lo then continue end
-        record.Root.Visible = true
-        record.Box.Visible = settings.Boxes and settings.BoxStyle == "Completa"
-        record.Box.Position = UDim2.fromOffset(lo.X,lo.Y)
-        record.Box.Size = UDim2.fromOffset(hi.X-lo.X,hi.Y-lo.Y)
-        record.Stroke.Color, record.Stroke.Thickness = accent,settings.Thickness
-        if settings.Boxes and settings.BoxStyle == "Cantos" then
-            local w,h = (hi.X-lo.X)*0.23,(hi.Y-lo.Y)*0.19
-            local segments = {
-                {lo,lo+Vector2.new(w,0)}, {lo,lo+Vector2.new(0,h)},
-                {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X-w,lo.Y)},
-                {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X,lo.Y+h)},
-                {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X+w,hi.Y)},
-                {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X,hi.Y-h)},
-                {hi,hi-Vector2.new(w,0)}, {hi,hi-Vector2.new(0,h)},
-            }
-            for index, segment in ipairs(segments) do
-                if not record.Corners[index] then
-                    record.Corners[index] = newLine(record.Root)
-                end
-                drawLine(record.Corners[index],segment[1],segment[2])
-            end
-        end
-        local text = {}
-        if settings.Names then table.insert(text,p.DisplayName) end
-        if settings.Distance then table.insert(text,string.format("%.0f studs",distance)) end
-        if settings.Health then table.insert(text,string.format("HP %.0f",hum.Health)) end
-        record.Text.Visible = #text > 0
-        record.Text.Text = table.concat(text," | ")
-        record.Text.TextColor3 = accent
-        record.Text.Position = UDim2.fromOffset((lo.X+hi.X)/2,lo.Y-4)
-        local fraction = math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
-        record.Health.Visible = settings.Health
-        record.Health.Position = UDim2.fromOffset(lo.X-6,hi.Y-(hi.Y-lo.Y)*fraction)
-        record.Health.Size = UDim2.fromOffset(3,(hi.Y-lo.Y)*fraction)
-        record.Health.BackgroundColor3 = Color3.fromHSV(fraction/3,0.8,1)
-        if settings.Skeleton then
-            local index = 0
-            for joint in pairs(record.Joints) do
-                local a,b = joint.Part0,joint.Part1
-                if not a or not b or not a:IsDescendantOf(character)
-                    or not b:IsDescendantOf(character)
-                    or a:FindFirstAncestorOfClass("Tool")
-                    or b:FindFirstAncestorOfClass("Tool")
-                    or a:FindFirstAncestorOfClass("Accessory")
-                    or b:FindFirstAncestorOfClass("Accessory") then continue end
-                local pa,va = project(camera,a.Position)
-                local pb,vb = project(camera,b.Position)
-                if va and vb then
-                    index += 1
-                    if not record.Lines[index] then record.Lines[index] = newLine(record.Root) end
-                    drawLine(record.Lines[index],pa,pb)
-                end
-            end
+        local espAllowed=(owner and settings.ESPPlayers) or (not owner and settings.ESPNPCs)
+        if settings.ESP and espAllowed then
+            renderESP(camera,record,distance)
+            if record.Root.Visible then drawn+=1 end
         end
     end
-    if aiming and bestPosition and (bestPosition-camera.CFrame.Position).Magnitude > 0.01 then
-        local desired = CFrame.lookAt(camera.CFrame.Position,bestPosition)
-        local alpha = settings.Instant and 1 or 1-math.exp(-settings.Strength*dt)
-        camera.CFrame = camera.CFrame:Lerp(desired,alpha)
+    if retained then best,bestPosition=retained,retainedPosition end
+    locked=aiming and best or nil
+    if aiming and bestPosition and (bestPosition-camera.CFrame.Position).Magnitude>0.01 then
+        local desired=CFrame.lookAt(camera.CFrame.Position,bestPosition)
+        camera.CFrame=camera.CFrame:Lerp(desired,settings.Instant and 1
+            or 1-math.exp(-settings.Strength*dt))
     end
-    statsElapsed += dt
-    if statsElapsed >= 0.25 then
-        statsElapsed = 0
-        status.Text = string.format("4k hub • %d alvos • menu %s • aim %s", tracked,
-            menuOpen and "aberto" or "fechado",settings.Aim and "ON" or "OFF")
-        diagnostics.Text = string.format(
-            "PlaceId: %s\nOutros jogadores: %d | elegíveis: %d\nSem Character: %d | sem Humanoid: %d\nSem parte corporal: %d | mortos: %d\nFiltrados por equipe: %d | distância: %d\nRig personalizado sem Humanoid exige adaptação específica.",
-            tostring(game.PlaceId),counts.total,tracked,counts.noCharacter,
-            counts.noHumanoid,counts.noRoot,counts.dead,counts.team,counts.range)
+    if refreshed then
+        status.Text=string.format("4k hub • jogadores %d • NPCs %d • ESP %d • aim %s",
+            playerCount,npcCount,drawn,settings.Aim and "ON" or "OFF")
+        diagnostics.Text=string.format(
+            "PlaceId: %s\nElegíveis: %d jogadores / %d NPCs\nESP na tela: %d\nNPCs precisam de Model + Humanoid vivo.\nMira: botão direito; menu aberto pausa a mira.",
+            tostring(game.PlaceId),playerCount,npcCount,drawn)
     end
 end)
