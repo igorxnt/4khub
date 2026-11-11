@@ -1,0 +1,602 @@
+-- Luau · RevolverArenaVisual.client.luau · Roblox client · Roblox Luau runtime
+-- Compatibility is unverified. Uses standard Player.Character/Humanoid rigs.
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
+local HttpService = game:GetService("HttpService")
+local player = Players.LocalPlayer
+assert(player, "This script requires a client execution context.")
+local playerGui = player:WaitForChild("PlayerGui")
+local old = playerGui:FindFirstChild("BloxVisualHUD")
+if old then old:Destroy() end
+
+local settings = {
+    ESP = true, Boxes = true, Skeleton = true, Names = true,
+    Distance = true, Health = true, TeamFilter = false,
+    Aim = false, Instant = false, VisibleOnly = true, Circle = true,
+    Radius = 160, Strength = 8, Range = 1000, Thickness = 2,
+    Hue = 0.57, Target = "Head", BoxStyle = "Completa",
+}
+local defaults = table.clone(settings)
+local refreshControls = {}
+local connections, records = {}, {}
+local dead, menuOpen = false, true
+local binding = "BloxVisual_" .. HttpService:GenerateGUID(false)
+local accent = Color3.fromHSV(settings.Hue, 0.7, 1)
+local function create(class, props, parent)
+    local obj = Instance.new(class)
+    for k, v in pairs(props) do obj[k] = v end
+    obj.Parent = parent
+    return obj
+end
+local function connect(signal, fn)
+    local connection = signal:Connect(fn)
+    table.insert(connections, connection)
+    return connection
+end
+local function corner(obj, radius)
+    create("UICorner", {CornerRadius = UDim.new(0, radius)}, obj)
+end
+local gui = create("ScreenGui", {
+    Name = "BloxVisualHUD", ResetOnSpawn = false, IgnoreGuiInset = true,
+    DisplayOrder = 90, ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
+}, playerGui)
+local drawing = create("Frame", {
+    Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1,
+}, gui)
+local panel = create("Frame", {
+    Position = UDim2.fromOffset(28, 72), Size = UDim2.fromOffset(600, 560),
+    BackgroundColor3 = Color3.fromRGB(16, 19, 27), BorderSizePixel = 0,
+    Active = true, ZIndex = 10,
+}, gui)
+corner(panel, 12)
+local border = create("UIStroke", {
+    Color = accent, Thickness = 1, Transparency = 0.3,
+}, panel)
+local header = create("TextLabel", {
+    Size = UDim2.new(1, -52, 0, 48), Position = UDim2.fromOffset(15, 0),
+    BackgroundTransparency = 1, Text = "4k hub",
+    TextColor3 = accent, TextSize = 17, Font = Enum.Font.GothamBold,
+    TextXAlignment = Enum.TextXAlignment.Left, Active = true, ZIndex = 11,
+}, panel)
+local closeButton = create("TextButton", {
+    Size = UDim2.fromOffset(32, 32), Position = UDim2.new(1, -42, 0, 8),
+    BackgroundColor3 = Color3.fromRGB(33, 39, 53), Text = "×",
+    TextColor3 = Color3.new(1, 1, 1), TextSize = 23,
+    Font = Enum.Font.Gotham, BorderSizePixel = 0, ZIndex = 12,
+    Modal = true,
+}, panel)
+corner(closeButton, 7)
+local sidebar = create("Frame", {
+    Position = UDim2.fromOffset(12, 56), Size = UDim2.new(0, 108, 1, -96),
+    BackgroundColor3 = Color3.fromRGB(20, 24, 34), BorderSizePixel = 0, ZIndex = 11,
+}, panel)
+corner(sidebar, 8)
+create("UIListLayout", {Padding = UDim.new(0, 8)}, sidebar)
+create("UIPadding", {
+    PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 6),
+    PaddingRight = UDim.new(0, 6),
+}, sidebar)
+local pages, tabButtons = {}, {}
+local list
+local activeTab = "Visual"
+local function selectTab(name)
+    activeTab = name
+    for key, page in pairs(pages) do page.Visible = key == name end
+    for key, b in pairs(tabButtons) do
+        b.BackgroundColor3 = key == name and Color3.fromRGB(37, 75, 108)
+            or Color3.fromRGB(26, 31, 43)
+    end
+end
+for _, name in ipairs({"Visual", "Mira", "Perfis"}) do
+    local page = create("ScrollingFrame", {
+        Name = name, Position = UDim2.fromOffset(136, 56),
+        Size = UDim2.new(1, -150, 1, -96), BackgroundTransparency = 1,
+        BorderSizePixel = 0, ScrollBarThickness = 3,
+        CanvasSize = UDim2.new(), AutomaticCanvasSize = Enum.AutomaticSize.Y,
+        ZIndex = 11, Visible = name == activeTab,
+    }, panel)
+    create("UIListLayout", {Padding = UDim.new(0, 8)}, page)
+    create("UIPadding", {PaddingBottom = UDim.new(0, 8)}, page)
+    pages[name] = page
+    local b = create("TextButton", {
+        Size = UDim2.new(1, 0, 0, 36), Text = name,
+        BackgroundColor3 = Color3.fromRGB(26, 31, 43), BorderSizePixel = 0,
+        TextColor3 = Color3.fromRGB(222, 231, 248), TextSize = 12,
+        Font = Enum.Font.GothamBold, ZIndex = 12,
+    }, sidebar)
+    corner(b, 6)
+    tabButtons[name] = b
+    connect(b.Activated, function() selectTab(name) end)
+end
+list = pages.Visual
+selectTab("Visual")
+create("TextLabel", {
+    Position = UDim2.new(0, 14, 1, -30), Size = UDim2.new(1, -28, 0, 22),
+    BackgroundTransparency = 1, Text = "RightShift: menu  •  mira: botão direito",
+    TextColor3 = Color3.fromRGB(151, 160, 181), Font = Enum.Font.Gotham,
+    TextSize = 11, ZIndex = 11,
+}, panel)
+local status = create("TextLabel", {
+    Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(510, 25),
+    BackgroundColor3 = Color3.fromRGB(16, 19, 27), BackgroundTransparency = 0.15,
+    Text = "4k hub • aguardando personagens", TextColor3 = accent,
+    Font = Enum.Font.Gotham, TextSize = 12, BorderSizePixel = 0, ZIndex = 4,
+}, gui)
+corner(status, 6)
+
+local function label(text)
+    return create("TextLabel", {
+        Size = UDim2.new(1, -6, 0, 24), BackgroundTransparency = 1,
+        Text = text, TextColor3 = Color3.fromRGB(155, 168, 195),
+        TextXAlignment = Enum.TextXAlignment.Left,
+        Font = Enum.Font.GothamBold, TextSize = 11, ZIndex = 12,
+    }, list)
+end
+local function button(text, fn)
+    local b = create("TextButton", {
+        Size = UDim2.new(1, -6, 0, 30), BorderSizePixel = 0,
+        BackgroundColor3 = Color3.fromRGB(29, 35, 48), Text = text,
+        TextColor3 = Color3.fromRGB(229, 234, 246), TextSize = 12,
+        Font = Enum.Font.Gotham, ZIndex = 12,
+    }, list)
+    corner(b, 6)
+    connect(b.Activated, function() fn(b) end)
+    return b
+end
+local function toggle(key, text)
+    local function refresh(b)
+        b.Text = text .. "     " .. (settings[key] and "ON" or "OFF")
+        b.TextColor3 = settings[key] and Color3.fromRGB(112, 225, 202)
+            or Color3.fromRGB(170, 177, 195)
+    end
+    local b = button("", function(item)
+        settings[key] = not settings[key]
+        refresh(item)
+    end)
+    table.insert(refreshControls, function() refresh(b) end)
+    refresh(b)
+end
+local sliderDrag
+local function slider(key, text, low, high, step)
+    local row = create("Frame", {
+        Size = UDim2.new(1, -6, 0, 44), BackgroundTransparency = 1, ZIndex = 12,
+    }, list)
+    local caption = create("TextLabel", {
+        Size = UDim2.new(1, 0, 0, 21), BackgroundTransparency = 1,
+        TextXAlignment = Enum.TextXAlignment.Left, Font = Enum.Font.Gotham,
+        TextSize = 12, TextColor3 = Color3.fromRGB(218, 225, 240), ZIndex = 13,
+    }, row)
+    local track = create("TextButton", {
+        Position = UDim2.fromOffset(0, 26), Size = UDim2.new(1, 0, 0, 12),
+        BackgroundColor3 = Color3.fromRGB(36, 44, 61), BorderSizePixel = 0,
+        Text = "", AutoButtonColor = false, ZIndex = 13,
+    }, row)
+    corner(track, 6)
+    local fill = create("Frame", {
+        BackgroundColor3 = accent, BorderSizePixel = 0, ZIndex = 14,
+    }, track)
+    corner(fill, 6)
+    local function refresh()
+        fill.Size = UDim2.fromScale((settings[key] - low) / (high - low), 1)
+        caption.Text = text .. ": " .. string.format("%.2f", settings[key])
+    end
+    local function update(x)
+        local t = math.clamp((x - track.AbsolutePosition.X)
+            / math.max(track.AbsoluteSize.X, 1), 0, 1)
+        settings[key] = math.clamp(math.round((low + t * (high-low)) / step) * step, low, high)
+        refresh()
+    end
+    connect(track.InputBegan, function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            sliderDrag = update
+            update(input.Position.X)
+        end
+    end)
+    refresh()
+    table.insert(refreshControls, refresh)
+end
+
+label("VISUAL")
+toggle("ESP", "ESP geral")
+toggle("Boxes", "Box")
+local boxStyleButton = button("Box: " .. settings.BoxStyle, function(b)
+    settings.BoxStyle = settings.BoxStyle == "Completa" and "Cantos" or "Completa"
+    b.Text = "Box: " .. settings.BoxStyle
+end)
+table.insert(refreshControls, function() boxStyleButton.Text = "Box: " .. settings.BoxStyle end)
+toggle("Skeleton", "Skeleton R6 / R15")
+toggle("Names", "Nome")
+toggle("Distance", "Distância em studs")
+toggle("Health", "Vida")
+slider("Range", "Distância máxima", 50, 3000, 10)
+slider("Thickness", "Espessura", 1, 5, 1)
+slider("Hue", "Cor", 0, 1, 0.01)
+list = pages.Mira
+label("MIRA")
+toggle("Aim", "Aimbot")
+toggle("Instant", "Rage / alinhamento instantâneo")
+toggle("TeamFilter", "Ignorar aliados — desligado no FFA")
+toggle("VisibleOnly", "Verificar obstáculos")
+toggle("Circle", "Círculo FOV")
+slider("Radius", "Raio do FOV em pixels", 20, 700, 5)
+slider("Strength", "Intensidade da mira", 1, 40, 1)
+local targetButton = button("Alvo: Head", function(b)
+    settings.Target = settings.Target == "Head" and "HumanoidRootPart" or "Head"
+    b.Text = "Alvo: " .. settings.Target
+end)
+table.insert(refreshControls, function() targetButton.Text = "Alvo: " .. settings.Target end)
+label("MENU ABERTO PAUSA A MIRA")
+list = pages.Perfis
+label("PERFIL EM TEXTO / JSON")
+local profileBox = create("TextBox", {
+    Size = UDim2.new(1, -6, 0, 154), BackgroundColor3 = Color3.fromRGB(25, 30, 43),
+    TextColor3 = Color3.fromRGB(200, 218, 242), Font = Enum.Font.Code, TextSize = 12,
+    Text = "", PlaceholderText = "Exporte um perfil ou cole um JSON aqui.",
+    ClearTextOnFocus = false, MultiLine = true, TextWrapped = true,
+    TextXAlignment = Enum.TextXAlignment.Left,
+    TextYAlignment = Enum.TextYAlignment.Top, BorderSizePixel = 0, ZIndex = 12,
+}, list)
+corner(profileBox, 6)
+create("UIPadding", {
+    PaddingTop = UDim.new(0, 8), PaddingLeft = UDim.new(0, 8),
+    PaddingRight = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8),
+}, profileBox)
+local profileStatus = label("Perfis não são gravados automaticamente em disco.")
+profileStatus.TextWrapped = true
+profileStatus.Size = UDim2.new(1, -6, 0, 40)
+local diagnostics = label("Diagnóstico: aguardando atualização")
+diagnostics.Size = UDim2.new(1, -6, 0, 125)
+diagnostics.TextWrapped = true
+diagnostics.TextYAlignment = Enum.TextYAlignment.Top
+diagnostics.TextXAlignment = Enum.TextXAlignment.Left
+local limits = {
+    Radius = {20,700}, Strength = {1,40}, Range = {50,3000},
+    Thickness = {1,5}, Hue = {0,1},
+}
+button("Exportar configuração", function()
+    profileBox.Text = HttpService:JSONEncode(settings)
+    profileStatus.Text = "Selecione e copie o texto para guardar seu perfil."
+end)
+button("Importar configuração", function()
+    local ok, data = pcall(function() return HttpService:JSONDecode(profileBox.Text) end)
+    if not ok or type(data) ~= "table" then
+        profileStatus.Text = "JSON inválido. Nenhuma configuração aplicada."
+        return
+    end
+    local candidate = table.clone(settings)
+    for key, value in pairs(data) do
+        if defaults[key] == nil or typeof(value) ~= typeof(defaults[key]) then
+            profileStatus.Text = "Campo desconhecido ou tipo inválido: " .. tostring(key)
+            return
+        end
+        if limits[key] then
+            if value ~= value or math.abs(value) == math.huge then
+                profileStatus.Text = "Número inválido: " .. key
+                return
+            end
+            candidate[key] = math.clamp(value, limits[key][1], limits[key][2])
+        elseif key == "Target" then
+            if value ~= "Head" and value ~= "HumanoidRootPart" then
+                profileStatus.Text = "Alvo inválido."
+                return
+            end
+            candidate[key] = value
+        elseif key == "BoxStyle" then
+            if value ~= "Completa" and value ~= "Cantos" then
+                profileStatus.Text = "Estilo de box inválido."
+                return
+            end
+            candidate[key] = value
+        else candidate[key] = value end
+    end
+    for key, value in pairs(candidate) do settings[key] = value end
+    for _, refresh in ipairs(refreshControls) do refresh() end
+    profileStatus.Text = "Perfil aplicado."
+end)
+button("Restaurar padrões", function()
+    for key, value in pairs(defaults) do settings[key] = value end
+    for _, refresh in ipairs(refreshControls) do refresh() end
+    profileStatus.Text = "Configuração padrão restaurada."
+end)
+
+local savedBehavior, savedIcon
+local function releaseMouse()
+    UIS.MouseBehavior = Enum.MouseBehavior.Default
+    UIS.MouseIconEnabled = true
+end
+local function setMenu(open)
+    if open and not menuOpen then
+        savedBehavior, savedIcon = UIS.MouseBehavior, UIS.MouseIconEnabled
+    elseif not open and menuOpen then
+        if savedBehavior then UIS.MouseBehavior = savedBehavior end
+        if savedIcon ~= nil then UIS.MouseIconEnabled = savedIcon end
+    end
+    menuOpen = open
+    panel.Visible = open
+    sliderDrag = nil
+    if open then releaseMouse() end
+end
+savedBehavior, savedIcon = UIS.MouseBehavior, UIS.MouseIconEnabled
+releaseMouse()
+connect(closeButton.Activated, function() setMenu(false) end)
+local panelDrag, dragOrigin, panelOrigin
+connect(header.InputBegan, function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        panelDrag, dragOrigin, panelOrigin = true, input.Position, panel.Position
+    end
+end)
+connect(UIS.InputChanged, function(input)
+    if input.UserInputType ~= Enum.UserInputType.MouseMovement then return end
+    if sliderDrag then sliderDrag(input.Position.X) end
+    if panelDrag then
+        local delta = input.Position - dragOrigin
+        local camera = workspace.CurrentCamera
+        if camera then
+            local view = camera.ViewportSize
+            panel.Position = UDim2.fromOffset(
+                math.clamp(panelOrigin.X.Offset + delta.X, 0, math.max(0, view.X-panel.AbsoluteSize.X)),
+                math.clamp(panelOrigin.Y.Offset + delta.Y, 0, math.max(0, view.Y-panel.AbsoluteSize.Y)))
+        end
+    end
+end)
+connect(UIS.InputEnded, function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        sliderDrag, panelDrag = nil, false
+    end
+end)
+connect(UIS.InputBegan, function(input)
+    if input.KeyCode == Enum.KeyCode.RightShift and not UIS:GetFocusedTextBox() then
+        setMenu(not menuOpen)
+    end
+end)
+connect(UIS.WindowFocusReleased, function() sliderDrag, panelDrag = nil, false end)
+
+local circle = create("Frame", {
+    AnchorPoint = Vector2.new(0.5, 0.5), BackgroundTransparency = 1,
+    BorderSizePixel = 0,
+}, drawing)
+create("UICorner", {CornerRadius = UDim.new(1, 0)}, circle)
+local circleStroke = create("UIStroke", {Thickness = 1, Transparency = 0.3}, circle)
+local function newLine(parent)
+    return create("Frame", {
+        AnchorPoint = Vector2.new(0.5, 0.5), BorderSizePixel = 0, Visible = false,
+    }, parent)
+end
+local function drawLine(obj, a, b)
+    local d = b-a
+    obj.Position = UDim2.fromOffset((a.X+b.X)/2, (a.Y+b.Y)/2)
+    obj.Size = UDim2.fromOffset(d.Magnitude, settings.Thickness)
+    obj.Rotation = math.deg(math.atan2(d.Y, d.X))
+    obj.BackgroundColor3 = accent
+    obj.Visible = true
+end
+local function addPlayer(p)
+    if p == player or records[p] then return end
+    local root = create("Frame", {
+        Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false,
+    }, drawing)
+    local box = create("Frame", {BackgroundTransparency = 1, BorderSizePixel = 0}, root)
+    local stroke = create("UIStroke", {Thickness = 2}, box)
+    local text = create("TextLabel", {
+        AnchorPoint = Vector2.new(0.5, 1), Size = UDim2.fromOffset(280, 48),
+        BackgroundTransparency = 1, TextStrokeTransparency = 0.2,
+        Font = Enum.Font.GothamBold, TextSize = 12,
+        TextYAlignment = Enum.TextYAlignment.Bottom,
+    }, root)
+    local health = create("Frame", {BorderSizePixel = 0}, root)
+    records[p] = {Root=root, Box=box, Stroke=stroke, Text=text,
+        Health=health, Lines={}, Corners={}, Character=nil, Joints={}, RigConnections={}}
+end
+local function disconnectRig(record)
+    for _, c in ipairs(record.RigConnections) do c:Disconnect() end
+    table.clear(record.RigConnections)
+end
+local function bindRig(record, character)
+    disconnectRig(record)
+    record.Character = character
+    table.clear(record.Joints)
+    local function add(object)
+        if object:IsA("Motor6D") then record.Joints[object] = true end
+    end
+    for _, obj in ipairs(character:GetDescendants()) do add(obj) end
+    table.insert(record.RigConnections, character.DescendantAdded:Connect(add))
+    table.insert(record.RigConnections, character.DescendantRemoving:Connect(function(obj)
+        record.Joints[obj] = nil
+    end))
+end
+local function removePlayer(p)
+    local record = records[p]
+    if record then disconnectRig(record); record.Root:Destroy() end
+    records[p] = nil
+end
+for _, p in ipairs(Players:GetPlayers()) do addPlayer(p) end
+connect(Players.PlayerAdded, addPlayer)
+connect(Players.PlayerRemoving, removePlayer)
+local function project(camera, position)
+    local p, shown = camera:WorldToViewportPoint(position)
+    return Vector2.new(p.X,p.Y), shown and p.Z > 0
+end
+local function bounds(camera, character)
+    local cf, size = character:GetBoundingBox()
+    local lo, hi = Vector2.new(math.huge, math.huge), Vector2.new(-math.huge,-math.huge)
+    for x=-1,1,2 do for y=-1,1,2 do for z=-1,1,2 do
+        local p = camera:WorldToViewportPoint(cf:PointToWorldSpace(
+            Vector3.new(size.X*x/2,size.Y*y/2,size.Z*z/2)))
+        if p.Z <= 0 then return nil end
+        lo = Vector2.new(math.min(lo.X,p.X),math.min(lo.Y,p.Y))
+        hi = Vector2.new(math.max(hi.X,p.X),math.max(hi.Y,p.Y))
+    end end end
+    if hi.X < 0 or hi.Y < 0 or lo.X > camera.ViewportSize.X
+        or lo.Y > camera.ViewportSize.Y then return nil end
+    return lo, hi
+end
+local params = RaycastParams.new()
+params.FilterType = Enum.RaycastFilterType.Exclude
+local function unobstructed(camera, character, position)
+    local ignore = {camera}
+    if player.Character then table.insert(ignore, player.Character) end
+    params.FilterDescendantsInstances = ignore
+    local hit = workspace:Raycast(camera.CFrame.Position,
+        position-camera.CFrame.Position, params)
+    return not hit or hit.Instance:IsDescendantOf(character)
+end
+local function findBodyPart(character, preferred)
+    for _, name in ipairs({preferred, "HumanoidRootPart", "UpperTorso", "Torso", "Head"}) do
+        local part = character:FindFirstChild(name, true)
+        if part and part:IsA("BasePart")
+            and not part:FindFirstAncestorOfClass("Tool")
+            and not part:FindFirstAncestorOfClass("Accessory") then return part end
+    end
+    return character.PrimaryPart
+end
+local function cleanup()
+    if dead then return end
+    dead = true
+    RunService:UnbindFromRenderStep(binding)
+    for _, c in ipairs(connections) do c:Disconnect() end
+    for _, record in pairs(records) do disconnectRig(record) end
+    if menuOpen then
+        if savedBehavior then UIS.MouseBehavior = savedBehavior end
+        if savedIcon ~= nil then UIS.MouseIconEnabled = savedIcon end
+    end
+end
+gui.Destroying:Connect(cleanup)
+button("Encerrar e remover HUD", function() gui:Destroy() end)
+
+local statsElapsed = 0
+RunService:BindToRenderStep(binding, Enum.RenderPriority.Last.Value + 1, function(dt)
+    if dead then return end
+    local camera = workspace.CurrentCamera
+    if not camera then return end
+    if menuOpen then releaseMouse() end
+    accent = Color3.fromHSV(settings.Hue,0.7,1)
+    header.TextColor3, border.Color, status.TextColor3 = accent,accent,accent
+    local view = camera.ViewportSize
+    panel.Size = UDim2.fromOffset(math.min(600, math.max(280, view.X-24)),
+        math.min(560, math.max(200, view.Y-100)))
+    if not panelDrag then
+        panel.Position = UDim2.fromOffset(
+            math.clamp(panel.Position.X.Offset,0,math.max(0,view.X-panel.AbsoluteSize.X)),
+            math.clamp(panel.Position.Y.Offset,0,math.max(0,view.Y-panel.AbsoluteSize.Y)))
+    end
+    local inset = GuiService:GetGuiInset()
+    status.Position = UDim2.fromOffset(12, inset.Y+8)
+    local center = view/2
+    status.Size = UDim2.fromOffset(math.min(510, math.max(200,view.X-24)),25)
+    circle.Position = UDim2.fromOffset(center.X,center.Y)
+    circle.Size = UDim2.fromOffset(settings.Radius*2,settings.Radius*2)
+    circle.Visible = settings.Aim and settings.Circle
+    circleStroke.Color = accent
+    local localRoot = player.Character and findBodyPart(player.Character,"HumanoidRootPart")
+    local origin = localRoot and localRoot.Position or camera.CFrame.Position
+    local bestPosition, bestScore, tracked = nil, settings.Radius, 0
+    local counts = {total=0,noCharacter=0,noHumanoid=0,noRoot=0,dead=0,team=0,range=0}
+    local ownHumanoid = player.Character and player.Character:FindFirstChildWhichIsA("Humanoid",true)
+    local aiming = settings.Aim and not menuOpen and player.Character
+        and (not ownHumanoid or ownHumanoid.Health > 0)
+        and UIS:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+        and not UIS:GetFocusedTextBox() and not GuiService.MenuIsOpen
+    for p, record in pairs(records) do
+        counts.total += 1
+        record.Root.Visible = false
+        for _, l in ipairs(record.Lines) do l.Visible = false end
+        for _, l in ipairs(record.Corners) do l.Visible = false end
+        local character = p.Character
+        if not character then counts.noCharacter += 1; continue end
+        if record.Character ~= character then bindRig(record, character) end
+        local hum = character:FindFirstChildWhichIsA("Humanoid",true)
+        local root = findBodyPart(character,"HumanoidRootPart")
+        local target = findBodyPart(character,settings.Target)
+        if not hum then counts.noHumanoid += 1; continue end
+        if hum.Health <= 0 then counts.dead += 1; continue end
+        if not root then counts.noRoot += 1; continue end
+        local allied = player.Team ~= nil and p.Team == player.Team
+            and not player.Neutral and not p.Neutral
+        if settings.TeamFilter and allied then counts.team += 1; continue end
+        local distance = (root.Position-origin).Magnitude
+        if distance > settings.Range then counts.range += 1; continue end
+        tracked += 1
+        if aiming and target and target:IsA("BasePart") then
+            local point, shown = project(camera,target.Position)
+            local score = (point-center).Magnitude
+            if shown and score < bestScore and (not settings.VisibleOnly
+                or unobstructed(camera,character,target.Position)) then
+                bestPosition, bestScore = target.Position,score
+            end
+        end
+        if not settings.ESP then continue end
+        local lo,hi = bounds(camera,character)
+        if not lo then continue end
+        record.Root.Visible = true
+        record.Box.Visible = settings.Boxes and settings.BoxStyle == "Completa"
+        record.Box.Position = UDim2.fromOffset(lo.X,lo.Y)
+        record.Box.Size = UDim2.fromOffset(hi.X-lo.X,hi.Y-lo.Y)
+        record.Stroke.Color, record.Stroke.Thickness = accent,settings.Thickness
+        if settings.Boxes and settings.BoxStyle == "Cantos" then
+            local w,h = (hi.X-lo.X)*0.23,(hi.Y-lo.Y)*0.19
+            local segments = {
+                {lo,lo+Vector2.new(w,0)}, {lo,lo+Vector2.new(0,h)},
+                {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X-w,lo.Y)},
+                {Vector2.new(hi.X,lo.Y),Vector2.new(hi.X,lo.Y+h)},
+                {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X+w,hi.Y)},
+                {Vector2.new(lo.X,hi.Y),Vector2.new(lo.X,hi.Y-h)},
+                {hi,hi-Vector2.new(w,0)}, {hi,hi-Vector2.new(0,h)},
+            }
+            for index, segment in ipairs(segments) do
+                if not record.Corners[index] then
+                    record.Corners[index] = newLine(record.Root)
+                end
+                drawLine(record.Corners[index],segment[1],segment[2])
+            end
+        end
+        local text = {}
+        if settings.Names then table.insert(text,p.DisplayName) end
+        if settings.Distance then table.insert(text,string.format("%.0f studs",distance)) end
+        if settings.Health then table.insert(text,string.format("HP %.0f",hum.Health)) end
+        record.Text.Visible = #text > 0
+        record.Text.Text = table.concat(text," | ")
+        record.Text.TextColor3 = accent
+        record.Text.Position = UDim2.fromOffset((lo.X+hi.X)/2,lo.Y-4)
+        local fraction = math.clamp(hum.Health/math.max(hum.MaxHealth,1),0,1)
+        record.Health.Visible = settings.Health
+        record.Health.Position = UDim2.fromOffset(lo.X-6,hi.Y-(hi.Y-lo.Y)*fraction)
+        record.Health.Size = UDim2.fromOffset(3,(hi.Y-lo.Y)*fraction)
+        record.Health.BackgroundColor3 = Color3.fromHSV(fraction/3,0.8,1)
+        if settings.Skeleton then
+            local index = 0
+            for joint in pairs(record.Joints) do
+                local a,b = joint.Part0,joint.Part1
+                if not a or not b or not a:IsDescendantOf(character)
+                    or not b:IsDescendantOf(character)
+                    or a:FindFirstAncestorOfClass("Tool")
+                    or b:FindFirstAncestorOfClass("Tool")
+                    or a:FindFirstAncestorOfClass("Accessory")
+                    or b:FindFirstAncestorOfClass("Accessory") then continue end
+                local pa,va = project(camera,a.Position)
+                local pb,vb = project(camera,b.Position)
+                if va and vb then
+                    index += 1
+                    if not record.Lines[index] then record.Lines[index] = newLine(record.Root) end
+                    drawLine(record.Lines[index],pa,pb)
+                end
+            end
+        end
+    end
+    if aiming and bestPosition and (bestPosition-camera.CFrame.Position).Magnitude > 0.01 then
+        local desired = CFrame.lookAt(camera.CFrame.Position,bestPosition)
+        local alpha = settings.Instant and 1 or 1-math.exp(-settings.Strength*dt)
+        camera.CFrame = camera.CFrame:Lerp(desired,alpha)
+    end
+    statsElapsed += dt
+    if statsElapsed >= 0.25 then
+        statsElapsed = 0
+        status.Text = string.format("4k hub • %d alvos • menu %s • aim %s", tracked,
+            menuOpen and "aberto" or "fechado",settings.Aim and "ON" or "OFF")
+        diagnostics.Text = string.format(
+            "PlaceId: %s\nOutros jogadores: %d | elegíveis: %d\nSem Character: %d | sem Humanoid: %d\nSem parte corporal: %d | mortos: %d\nFiltrados por equipe: %d | distância: %d\nRig personalizado sem Humanoid exige adaptação específica.",
+            tostring(game.PlaceId),counts.total,tracked,counts.noCharacter,
+            counts.noHumanoid,counts.noRoot,counts.dead,counts.team,counts.range)
+    end
+end)
